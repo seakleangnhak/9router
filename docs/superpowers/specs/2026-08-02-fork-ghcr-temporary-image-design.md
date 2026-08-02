@@ -21,7 +21,7 @@ Both tags must resolve to the same multi-platform manifest. The package must be 
 
 ## Workflow Behavior
 
-The workflow runs when `codex/gpt-5-6-temp-image` is pushed and also supports manual dispatch while the workflow remains on that branch. Concurrency cancels an older in-progress build for the same branch. BuildKit registry caching uses a dedicated GHCR build-cache tag.
+The workflow runs when `codex/gpt-5-6-temp-image` is pushed. GitHub only reliably dispatches manual workflows that exist on the default branch, so this fork-only workflow deliberately uses the branch push as its trigger. Concurrency cancels an older in-progress build for the same branch. BuildKit registry caching uses a dedicated GHCR build-cache tag.
 
 The immutable tag is derived from the feature commit being packaged, not from the workflow-only commit, so it identifies the application code in upstream PR #2988.
 

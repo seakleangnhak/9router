@@ -80,7 +80,6 @@ on:
   push:
     branches:
       - codex/gpt-5-6-temp-image
-  workflow_dispatch:
 
 permissions:
   contents: read
