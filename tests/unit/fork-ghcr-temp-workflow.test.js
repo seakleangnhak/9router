@@ -16,8 +16,8 @@ describe("fork GHCR temporary image workflow", () => {
     expect(workflow.permissions).toEqual({ contents: "read", packages: "write" });
     expect(workflow.env).toEqual({
       GHCR_IMAGE: "ghcr.io/${{ github.repository }}",
-      FEATURE_COMMIT: "34e4cfa0ba6d9189eeb3d01135df5824ad33a2b1",
-      FEATURE_TAG: "34e4cfa",
+      FEATURE_COMMIT: "e92a3b1151656fde1648560200cecfceb0fc6ab2",
+      FEATURE_TAG: "e92a3b1",
     });
 
     expect(Object.keys(workflow.jobs)).toEqual(["build-and-push"]);
