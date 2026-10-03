@@ -2,9 +2,9 @@
 
 import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";
+import { formatCost as fmtCost } from "open-sse/providers/pricing.js";
 
 const fmt = (n) => new Intl.NumberFormat().format(n || 0);
-const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
 
 export default function OverviewCards({ stats }) {
   return (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { REASONING_EFFORTS } from "open-sse/config/reasoningEffort.js";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,10 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, models, kind } = body;
+    const { name, models, kind, maxReasoningEffort } = body;
+    if (maxReasoningEffort !== undefined && maxReasoningEffort !== null && !REASONING_EFFORTS.includes(maxReasoningEffort)) {
+      return NextResponse.json({ error: "Invalid maxReasoningEffort" }, { status: 400 });
+    }
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -38,7 +42,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
     }
 
-    const combo = await createCombo({ name, models: models || [], kind: kind || null });
+    const combo = await createCombo({ name, models: models || [], kind: kind || null, maxReasoningEffort });
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {

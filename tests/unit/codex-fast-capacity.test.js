@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexExecutor } from "../../open-sse/executors/codex.js";
+import "../translator/registerAll.js";
+import { translateRequest } from "../../open-sse/translator/index.js";
+import { FORMATS } from "../../open-sse/translator/formats.js";
+import { getModelInfoCore } from "../../open-sse/services/model.js";
+import * as proxyFetchModule from "../../open-sse/utils/proxyFetch.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 function streamFromText(text) {
   const encoder = new TextEncoder();
@@ -12,6 +19,48 @@ function streamFromText(text) {
 }
 
 describe("Codex fast tier and capacity handling", () => {
+  it("routes a catalog model alias to Codex for the CLI fast toggle", async () => {
+    await expect(getModelInfoCore("gpt-6.1-sol", { "gpt-6.1-sol": "cx/gpt-6.1-sol" }))
+      .resolves.toEqual({ provider: "codex", model: "gpt-6.1-sol" });
+  });
+
+  it.each([
+    [FORMATS.OPENAI_RESPONSES, "priority", "priority"],
+    [FORMATS.OPENAI_RESPONSES, "fast", "priority"],
+    [FORMATS.OPENAI_RESPONSES, "default", undefined],
+    [FORMATS.OPENAI_RESPONSES, undefined, undefined],
+    [FORMATS.OPENAI, "priority", "priority"],
+    [FORMATS.OPENAI, "fast", "priority"],
+    [FORMATS.OPENAI, "default", undefined],
+    [FORMATS.OPENAI, undefined, undefined],
+  ])("sends %s tier %s as %s for GPT-6.1 Sol", async (sourceFormat, tier, expected) => {
+    const fetchMock = vi.spyOn(proxyFetchModule, "proxyAwareFetch").mockResolvedValue({
+      ok: true, status: 200, headers: new Map(),
+    });
+    const model = "gpt-6.1-sol";
+    const request = {
+      model,
+      reasoning: { effort: "high" },
+      ...(tier !== undefined ? { service_tier: tier } : {}),
+      ...(sourceFormat === FORMATS.OPENAI
+        ? { messages: [{ role: "user", content: "hello" }] }
+        : { input: "hello" }),
+    };
+    const credentials = { accessToken: "fixture-token", connectionId: "fixture" };
+    const body = translateRequest(sourceFormat, FORMATS.OPENAI_RESPONSES, model,
+      request, true, credentials, "codex");
+
+    await new CodexExecutor().execute({ model, body, stream: true, credentials });
+
+    const [url, options] = fetchMock.mock.calls[0];
+    const outbound = JSON.parse(options.body);
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(options.headers["x-openai-internal-codex-responses-lite"]).toBe("true");
+    expect(outbound.model).toBe(model);
+    expect(outbound.service_tier).toBe(expected);
+    expect(outbound.reasoning.effort).toBe("high");
+  });
+
   it("maps Codex fast tier to priority and max reasoning to xhigh", () => {
     const executor = new CodexExecutor();
     const body = executor.transformRequest("gpt-5.5", {

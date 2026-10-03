@@ -18,6 +18,7 @@ import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
+import { FAST_MODES } from "@/lib/db/helpers/apiKeyFastMode.js";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,6 +26,8 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
+  const [fastModeSaving, setFastModeSaving] = useState(null);
+  const [fastModeError, setFastModeError] = useState("");
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -674,6 +677,25 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleFastModeChange = async (id, fastMode) => {
+    setFastModeSaving(id);
+    setFastModeError("");
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fastMode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update Fast mode");
+      setKeys(prev => prev.map(key => key.id === id ? data.key : key));
+    } catch (error) {
+      setFastModeError(error.message);
+    } finally {
+      setFastModeSaving(null);
+    }
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -986,6 +1008,11 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
 
+        <p className="text-sm text-text-muted mb-4">
+          Fast mode: OFF forces normal speed, ON follows the client, FORCE always requests priority. Priority uses more quota.
+        </p>
+        {fastModeError && <p role="alert" className="text-sm text-red-500 mb-4">{fastModeError}</p>}
+
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1002,12 +1029,12 @@ export default function APIPageClient({ machineId }) {
             {keys.map((key) => (
               <div
                 key={key.id}
-                className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
+                className={`group flex flex-col gap-2 sm:flex-row sm:items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{key.name}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
+                    <code className="truncate text-xs text-text-muted font-mono">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
                     </code>
                     <button
@@ -1035,7 +1062,19 @@ export default function APIPageClient({ machineId }) {
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    aria-label={`Fast mode for ${key.name}: ${key.fastMode.toUpperCase()}. Click to set ${FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length].toUpperCase()}`}
+                    aria-busy={fastModeSaving === key.id}
+                    disabled={fastModeSaving !== null}
+                    onClick={() => handleFastModeChange(key.id, FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length])}
+                    title={fastModeSaving === key.id ? "Saving Fast mode…" : `${key.fastMode.toUpperCase()}: ${key.fastMode === "off" ? "Force normal speed" : key.fastMode === "on" ? "Follow client request" : "Always request priority"}`}
+                    className={`inline-flex h-9 items-center justify-center gap-1 px-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-wait ${key.fastMode === "force" ? "bg-primary/20 text-primary ring-1 ring-primary" : key.fastMode === "on" ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
+                  >
+                    <span aria-hidden="true" className={`material-symbols-outlined text-[22px] ${key.fastMode !== "off" ? "fill-1" : ""}`}>bolt</span>
+                    <span className="text-[10px] font-semibold text-text-main">{key.fastMode.toUpperCase()}</span>
+                  </button>
                   <Toggle
                     size="sm"
                     checked={key.isActive ?? true}

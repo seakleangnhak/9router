@@ -52,6 +52,8 @@ export async function getPricingForModel(provider, model) {
   if (!model) return null;
   const userPricing = await getUserPricing();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
+  const cleanModel = model.replace(/\([^()]+\)\s*$/, "").trim();
+  if (provider && userPricing[provider]?.[cleanModel]) return userPricing[provider][cleanModel];
   const { getPricingForModel: resolveConst } = await import("open-sse/providers/pricing.js");
   return resolveConst(provider, model);
 }

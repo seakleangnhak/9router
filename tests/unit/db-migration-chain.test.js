@@ -25,6 +25,21 @@ afterEach(() => {
 });
 
 describe("Schema migrations", () => {
+  it("upgrades existing combos without changing reasoning behavior", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    db.exec(`ALTER TABLE combos DROP COLUMN maxReasoningEffort`);
+    db.run(`INSERT INTO combos(id, name, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?)`, ["old-combo", "existing-combo", '["cx/gpt-6.1-sol"]', new Date().toISOString(), new Date().toISOString()]);
+    db.run(`UPDATE _meta SET value = '3' WHERE key = 'backupSchemaVersion'`);
+    db.close();
+    delete global._dbAdapter;
+    vi.resetModules();
+    const combos = await import("@/lib/db/repos/combosRepo.js");
+    expect((await combos.getComboById("old-combo")).maxReasoningEffort).toBeNull();
+    await combos.updateCombo("old-combo", { maxReasoningEffort: "high" });
+    expect((await combos.getComboById("old-combo")).maxReasoningEffort).toBe("high");
+  });
+
   it("fresh DB → applies migrations & stamps schemaVersion", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const { latestVersion } = await import("@/lib/db/migrations/index.js");
@@ -96,5 +111,31 @@ describe("Schema migrations", () => {
     const db2 = await getAdapter2();
     const idx = db2.all(`PRAGMA index_list(providerNodes)`).map(i => i.name);
     expect(idx).toContain("idx_pn_type");
+  });
+
+  it("upgrades existing OFF/ON keys and persists FORCE on restart", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    db.exec(`ALTER TABLE apiKeys DROP COLUMN fastMode`);
+    db.run(`INSERT INTO apiKeys(id, key, name, createdAt) VALUES(?, ?, ?, ?)`, ["old-key", "old-secret", "Existing", new Date().toISOString()]);
+    db.run(`INSERT INTO apiKeys(id, key, name, allowFastMode, createdAt) VALUES(?, ?, ?, ?, ?)`, ["on-key", "on-secret", "Enabled", 1, new Date().toISOString()]);
+    db.run(`UPDATE _meta SET value = '2' WHERE key = 'backupSchemaVersion'`);
+    db.close();
+    delete global._dbAdapter;
+    vi.resetModules();
+
+    const keys = await import("@/lib/db/repos/apiKeysRepo.js");
+    expect((await keys.getApiKeyById("old-key")).allowFastMode).toBe(false);
+    expect(await keys.getApiKeyFastMode("old-secret")).toBe("off");
+    expect(await keys.getApiKeyFastMode("on-secret")).toBe("on");
+    await keys.updateApiKey("old-key", { fastMode: "force" });
+    global._dbAdapter.instance.close();
+    delete global._dbAdapter;
+    vi.resetModules();
+
+    const restarted = await import("@/lib/db/repos/apiKeysRepo.js");
+    expect(await restarted.getApiKeyFastMode("old-secret")).toBe("force");
+    expect(await restarted.getApiKeyFastMode("on-secret")).toBe("on");
+    expect(fs.readdirSync(path.join(tempDir, "db", "backups"))).not.toHaveLength(0);
   });
 });

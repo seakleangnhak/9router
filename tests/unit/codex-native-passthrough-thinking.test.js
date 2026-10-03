@@ -35,16 +35,18 @@ vi.mock("../../open-sse/handlers/chatCore/sseToJsonHandler.js", () => ({
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 
-async function runNativeCodexRequest(model, reasoning) {
+async function runNativeCodexRequest(model, reasoning, maxReasoningEffort, sourceFormat = "openai-responses") {
   const body = {
     model,
     input: "hello",
     stream: false,
     ...(reasoning ? { reasoning } : {}),
+    ...(sourceFormat === "openai" ? { messages: [{ role: "user", content: "hello" }] } : {}),
   };
 
   await handleChatCore({
     body,
+    maxReasoningEffort,
     modelInfo: { provider: "codex", model },
     credentials: { accessToken: "test-token", providerSpecificData: {} },
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -54,9 +56,9 @@ async function runNativeCodexRequest(model, reasoning) {
     cavemanEnabled: false,
     ponytailEnabled: false,
     pxpipeEnabled: false,
-    sourceFormatOverride: "openai-responses",
+    sourceFormatOverride: sourceFormat,
     clientRawRequest: {
-      endpoint: "/v1/responses",
+      endpoint: sourceFormat === "openai" ? "/v1/chat/completions" : "/v1/responses",
       body,
       headers: {
         accept: "application/json",
@@ -88,6 +90,31 @@ describe("native Codex passthrough thinking suffixes", () => {
 
     expect(body.model).toBe("gpt-5.6-sol");
     expect(body.reasoning).toEqual({ effort: "ultra" });
+  });
+
+  it.each(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].flatMap(effort =>
+    ["openai", "openai-responses"].map(format => [effort, format])
+  ))("caps %s at high for %s while preserving reasoning metadata", async (effort, format) => {
+    const body = await runNativeCodexRequest("gpt-6.1-sol", { effort, summary: "detailed" }, "high", format);
+    expect(body.reasoning.effort).toBe(["xhigh", "max", "ultra"].includes(effort) ? "high" : effort);
+    if (format === "openai-responses") expect(body.reasoning.summary).toBe("detailed");
+  });
+
+  it("caps a model suffix after normalization", async () => {
+    const body = await runNativeCodexRequest("gpt-6.1-sol(xhigh)", { summary: "detailed" }, "high");
+    expect(body.reasoning).toEqual({ effort: "high", summary: "detailed" });
+  });
+
+  it("does not mutate shared client reasoning used by other fallback or fusion branches", async () => {
+    const reasoning = { effort: "ultra", summary: "detailed" };
+    const body = await runNativeCodexRequest("gpt-6.1-sol", reasoning, "high");
+    expect(body.reasoning.effort).toBe("high");
+    expect(reasoning).toEqual({ effort: "ultra", summary: "detailed" });
+  });
+
+  it("does not inject reasoning when client has not requested it", async () => {
+    const body = await runNativeCodexRequest("gpt-6.1-sol", undefined, "high");
+    expect(body.reasoning).toBeUndefined();
   });
 
   it("converts unsupported Luna Ultra to Max without dropping reasoning metadata", async () => {

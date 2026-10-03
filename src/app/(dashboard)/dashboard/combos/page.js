@@ -9,6 +9,7 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
+import { REASONING_EFFORTS } from "open-sse/config/reasoningEffort.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -592,6 +593,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
           </div>
           <div className="min-w-0 flex-1">
             <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+            {combo.maxReasoningEffort && <p className="mt-1 text-xs text-text-muted">Max reasoning: {combo.maxReasoningEffort}</p>}
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
@@ -1010,6 +1012,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
+  const [maxReasoningEffort, setMaxReasoningEffort] = useState(combo?.maxReasoningEffort || "unlimited");
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -1100,7 +1103,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models });
+    await onSave({ name: name.trim(), models, maxReasoningEffort: maxReasoningEffort === "unlimited" ? null : maxReasoningEffort });
     setSaving(false);
   };
 
@@ -1127,6 +1130,15 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               Only letters, numbers, -, _ and . allowed
             </p>
           </div>
+
+          <Select
+            label="Max reasoning effort"
+            aria-label="Max reasoning effort"
+            value={maxReasoningEffort}
+            onChange={(event) => setMaxReasoningEffort(event.target.value)}
+            options={[{ value: "unlimited", label: "No limit" }, ...REASONING_EFFORTS.map(value => ({ value, label: value }))]}
+            hint="Lower efforts pass through. Higher efforts are reduced to this limit."
+          />
 
           {/* Models */}
           <div>

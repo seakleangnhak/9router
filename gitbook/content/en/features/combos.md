@@ -560,3 +560,17 @@ Dashboard → Combos → Clone "premium-coding"
 
 - [Smart Routing](./smart-routing.md) - How auto fallback works
 - [Quota Tracking](./quota-tracking.md) - Monitor usage and costs
+
+
+## Max reasoning effort
+
+Set **Max reasoning effort** when creating or editing a combo. **No limit** keeps
+existing behavior. With the ceiling set to **high**, `none`, `minimal`, `low`,
+`medium`, and `high` pass through; `xhigh`, `max`, and `ultra` become `high`.
+
+This caps named effort fields (`reasoning.effort`, `reasoning_effort`, and
+`output_config.effort`) after model suffixes and provider defaults are applied.
+It covers fallback, round-robin, and fusion panel/judge calls. Nested combos use
+the stricter ceiling. Requests without a named effort are unchanged.
+
+The combo API accepts `"maxReasoningEffort": "high"`; send `null` to remove it.

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { FAST_MODES } from "@/lib/db/helpers/apiKeyFastMode.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -21,7 +22,15 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, allowFastMode, fastMode } = body;
+    for (const [field, value] of Object.entries({ isActive, allowFastMode })) {
+      if (value !== undefined && typeof value !== "boolean") {
+        return NextResponse.json({ error: `${field} must be a boolean` }, { status: 400 });
+      }
+    }
+    if (fastMode !== undefined && !FAST_MODES.includes(fastMode)) {
+      return NextResponse.json({ error: "fastMode must be off, on, or force" }, { status: 400 });
+    }
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +39,8 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (allowFastMode !== undefined) updateData.allowFastMode = allowFastMode;
+    if (fastMode !== undefined) updateData.fastMode = fastMode;
 
     const updated = await updateApiKey(id, updateData);
 
