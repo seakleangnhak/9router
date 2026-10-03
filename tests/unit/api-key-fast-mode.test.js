@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { chatCore } = vi.hoisted(() => ({ chatCore: vi.fn() }));
+const { chatCore, providerCredentials } = vi.hoisted(() => ({ chatCore: vi.fn(), providerCredentials: vi.fn() }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: chatCore }));
 vi.mock("../../src/sse/services/auth.js", async (importOriginal) => ({
   ...await importOriginal(),
-  getProviderCredentials: async () => ({ connectionId: "fixture", accessToken: "fixture" }),
+  getProviderCredentials: providerCredentials,
   clearAccountError: async () => {},
 }));
 vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
@@ -46,6 +46,7 @@ afterAll(() => {
 beforeEach(async () => {
   vi.clearAllMocks();
   chatCore.mockResolvedValue({ success: true, response: new Response("OK") });
+  providerCredentials.mockResolvedValue({ connectionId: "fixture", accessToken: "fixture" });
   await db.updateSettings({ requireApiKey: true });
 });
 
@@ -194,6 +195,23 @@ describe("API key Fast mode policy", () => {
 
 
 describe("Combo reasoning ceiling with API key policies", () => {
+  it.each([
+    ["cx/gpt-6-sol[1m]", "gpt-6-sol[1m]", null],
+    ["context-limit-combo", "gpt-6.1-sol", "high"],
+  ])("keeps context routing separate from reasoning ceiling for %s", async (model, requestedModel, maxReasoningEffort) => {
+    if (maxReasoningEffort) {
+      await db.createCombo({ name: model, models: ["cx/gpt-6.1-sol"], maxReasoningEffort });
+    }
+    const key = await db.createApiKey("forced-context", "fixture", false, "force");
+    const providerOverrides = { headers: { "X-Local-Header": "fixture" } };
+    await db.updateSettings({ providerOverrides: { codex: providerOverrides } });
+    expect((await handleChat(request({ model, input: "hello", reasoning: { effort: "ultra" } }, key.key))).status).toBe(200);
+    expect(providerCredentials.mock.calls[0][3]).toEqual({ requestedModel });
+    expect(chatCore.mock.calls[0][0]).toMatchObject({
+      maxReasoningEffort, providerOverrides, body: { service_tier: "priority" },
+    });
+  });
+
   it("saves, exports, imports, and clears a ceiling through the management API", async () => {
     const { POST } = await import("../../src/app/api/combos/route.js");
     const { PUT } = await import("../../src/app/api/combos/[id]/route.js");
