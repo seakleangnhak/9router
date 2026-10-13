@@ -114,6 +114,7 @@ export async function handleSystemone(request) {
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+    const requestStartTime = Date.now();
     const result = await handleSystemoneCore({
       body,
       modelInfo: { provider, model },
@@ -132,6 +133,7 @@ export async function handleSystemone(request) {
           connectionId: credentials.connectionId,
           apiKey,
           endpoint: url.pathname,
+          latency: { total: Date.now() - requestStartTime },
           tokens: {
             ...result.usage,
             total_tokens: result.usage.prompt_tokens + result.usage.completion_tokens,

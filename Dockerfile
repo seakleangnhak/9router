@@ -19,7 +19,8 @@ ARG NPM_REGISTRY
 
 RUN apk add --no-cache python3 make g++ linux-headers
 
-COPY package.json ./
+# ponytail: upstream omits lockfile; use npm ci once lockfile is committed.
+COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm install \
       --registry="${NPM_REGISTRY}" \
@@ -31,7 +32,12 @@ RUN --mount=type=cache,target=/root/.npm \
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# ponytail: images stay unoptimized; restore sharp if Next image optimization is enabled.
+RUN npm run build && \
+    rm -rf .next/standalone/node_modules/sharp \
+           .next/standalone/node_modules/@img \
+           node_modules/node-forge/dist \
+           node_modules/node-forge/flash
 
 FROM ${NODE_IMAGE} AS runner
 ARG ALPINE_MIRROR

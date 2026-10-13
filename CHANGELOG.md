@@ -2,9 +2,12 @@
 
 - Merge official 9Router v0.5.99 while preserving API-key Fast modes, combo reasoning ceilings, pricing, TLS/proxy safeguards, and Docker/GHCR changes.
 - Combine per-key model/combo access controls with Fast modes in the dashboard and SQLite import/export; back up existing databases before schema upgrade.
+- Publish the updated Docker image for amd64 and arm64 with `0.5.99-gpt-6.1-sol` and the existing moving GPT-6.1 Sol tags.
 
 # Local integration (2026-10-03)
 
+- Show per-request output TPS in Usage Recent Requests, Details, and the request drawer; persist total duration for new usage rows, with unavailable timing shown as `—`.
+- Build the custom `0.5.95-tps-amd64` Docker image from locked dependencies; omit unused Sharp and node-forge browser/Flash bundles while preserving runtime features.
 - Merge official 9Router v0.5.95 while preserving API-key Fast modes, combo reasoning ceilings, pricing display, and Docker/GHCR changes.
 - Keep TLS verification enabled by default; insecure retries require explicit `STRICT_SSL=false` or `0`.
 - Reject unresolved strict proxies before DNS bypass can open a direct connection.

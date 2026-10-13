@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
+import { formatTokensPerSecond } from "@/shared/utils/requestSpeed";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
 function isLLMProvider(id) {
@@ -59,7 +60,13 @@ function RecentRequests({ requests = [] }) {
                 <th className="py-1.5 text-left font-semibold text-text-muted w-2"></th>
                 <th className="py-1.5 text-left font-semibold text-text-muted">Model</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted whitespace-nowrap">In / Out</th>
-                <th className="py-1.5 text-right font-semibold text-text-muted">When</th>
+                <th
+                  scope="col"
+                  className="py-1.5 pl-3 text-right font-semibold text-text-muted whitespace-nowrap"
+                  title="Output tokens per second over total request time, including first-token wait."
+                  aria-label="TPS: Output tokens per second over total request time, including first-token wait."
+                >TPS</th>
+                <th className="py-1.5 pl-3 text-right font-semibold text-text-muted">When</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -76,7 +83,8 @@ function RecentRequests({ requests = [] }) {
                       {" "}
                       <span className="text-success">{fmt(r.completionTokens)}↓</span>
                     </td>
-                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
+                    <td className="py-1.5 pl-3 text-right font-mono whitespace-nowrap">{formatTokensPerSecond(r.tokensPerSecond)}</td>
+                    <td className="py-1.5 pl-3 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
                   </tr>
                 );
               })}

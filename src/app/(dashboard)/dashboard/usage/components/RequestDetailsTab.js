@@ -6,6 +6,7 @@ import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
+import { getTokensPerSecond, formatTokensPerSecond } from "@/shared/utils/requestSpeed";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
 let providerNameCache = null;
@@ -259,6 +260,12 @@ export default function RequestDetailsTab() {
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cache Creation</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Output Tokens</th>
+                <th
+                  scope="col"
+                  className="text-right p-4 text-sm font-semibold text-text-main"
+                  title="Output tokens per second over total request time, including first-token wait."
+                  aria-label="TPS: Output tokens per second over total request time, including first-token wait."
+                >TPS</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Latency</th>
                 <th className="text-center p-4 text-sm font-semibold text-text-main">Action</th>
               </tr>
@@ -266,7 +273,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -275,7 +282,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -307,6 +314,9 @@ export default function RequestDetailsTab() {
                     </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {detail.tokens?.completion_tokens?.toLocaleString() || 0}
+                    </td>
+                    <td className="p-4 text-sm text-text-main text-right font-mono">
+                      {formatTokensPerSecond(getTokensPerSecond(detail.tokens, detail.latency?.total))}
                     </td>
                     <td className="p-4 text-sm text-text-muted">
                       <div className="flex flex-col gap-0.5">
@@ -348,6 +358,7 @@ export default function RequestDetailsTab() {
         onClose={() => setIsDrawerOpen(false)}
         title="Request Details"
         width="lg"
+        className="max-w-full"
       >
         {selectedDetail && (
           <div className="space-y-6">
@@ -409,6 +420,16 @@ export default function RequestDetailsTab() {
                 <span className="text-text-muted">Output Tokens:</span>{" "}
                 <span className="text-text-main font-mono">
                   {selectedDetail.tokens?.completion_tokens?.toLocaleString() || 0}
+                </span>
+              </div>
+              <div>
+                <span
+                  className="text-text-muted"
+                  title="Output tokens per second over total request time, including first-token wait."
+                  aria-label="TPS: Output tokens per second over total request time, including first-token wait."
+                >TPS:</span>{" "}
+                <span className="text-text-main font-mono">
+                  {formatTokensPerSecond(getTokensPerSecond(selectedDetail.tokens, selectedDetail.latency?.total))}
                 </span>
               </div>
             </div>

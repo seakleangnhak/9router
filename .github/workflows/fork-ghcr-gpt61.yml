@@ -40,12 +40,12 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            APP_VERSION=0.5.91-gpt-6.1-sol-fix1
+            APP_VERSION=0.5.99-gpt-6.1-sol
           tags: |
             ${{ env.GHCR_IMAGE }}:gpt-6.1-sol
-            ${{ env.GHCR_IMAGE }}:0.5.91-gpt-6.1-sol
+            ${{ env.GHCR_IMAGE }}:0.5.99-gpt-6.1-sol
             ${{ env.GHCR_IMAGE }}:gpt-6.1-sol-fix
-            ${{ env.GHCR_IMAGE }}:0.5.91-gpt-6.1-sol-fix
+            ${{ env.GHCR_IMAGE }}:0.5.99-gpt-6.1-sol-fix
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
