@@ -145,6 +145,25 @@ describe("API key Fast mode policy", () => {
     expect((await db.getApiKeyById(key.id)).fastMode).toBe(fastMode);
   });
 
+  it.each(["off", "on", "force"])("keeps access restrictions and %s mode through independent updates and export/import", async (fastMode) => {
+    const initialMode = fastMode === "force" ? "off" : "force";
+    const key = await db.createApiKey("restricted-fast", "fixture", false, initialMode);
+    const access = { restricted: true, allow: ["fast-combo"] };
+    const params = { params: Promise.resolve({ id: key.id }) };
+    const restricted = await updateKey(request({ access }), params);
+    expect(restricted.status).toBe(200);
+    expect((await restricted.json()).key).toMatchObject({ fastMode: initialMode, access });
+    const changedMode = await updateKey(request({ fastMode }), params);
+    expect(changedMode.status).toBe(200);
+    expect((await changedMode.json()).key).toMatchObject({ fastMode, access });
+
+    const snapshot = await db.exportDb();
+    expect(snapshot.apiKeys.find((entry) => entry.id === key.id)).toMatchObject({ fastMode, access });
+    await db.updateApiKey(key.id, { fastMode: "off", access: { restricted: false, allow: [] } });
+    await db.importDb(snapshot);
+    expect(await db.getApiKeyByKey(key.key)).toMatchObject({ fastMode, access });
+  });
+
   it.each(["invalid", "FORCE", true, 2, null, {}, []])("rejects invalid mode %j without changing the key", async (fastMode) => {
     expect((await createKey(request({ name: "invalid", fastMode }))).status).toBe(400);
     expect((await updateKey(request({ fastMode }), { params: Promise.resolve({ id: denied.id }) })).status).toBe(400);
