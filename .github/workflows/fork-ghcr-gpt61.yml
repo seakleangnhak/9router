@@ -42,6 +42,7 @@ jobs:
           build-args: |
             APP_VERSION=0.5.99-gpt-6.1-sol
           tags: |
+            ${{ env.GHCR_IMAGE }}:latest
             ${{ env.GHCR_IMAGE }}:gpt-6.1-sol
             ${{ env.GHCR_IMAGE }}:0.5.99-gpt-6.1-sol
             ${{ env.GHCR_IMAGE }}:gpt-6.1-sol-fix
