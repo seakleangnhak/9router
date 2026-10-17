@@ -131,7 +131,11 @@
     "mm": "minimax-code",
     "minimax-code": "minimax-code",
     "mmg": "minimax-code-global",
-    "minimax-code-global": "minimax-code-global"
+    "minimax-code-global": "minimax-code-global",
+    "nous": "nous",
+    "nous-portal": "nous",
+    "nous-research": "nous",
+    "ns": "nous"
   },
   "idToAlias": {
     "agnes": "agnes",
@@ -218,6 +222,7 @@
     "muse": "muse",
     "nanobanana": "nanobanana",
     "nebius": "nebius",
+    "nous": "nous",
     "nvidia": "nvidia",
     "ollama": "ollama",
     "ollama-local": "ollama-local",
@@ -339,6 +344,7 @@
     "muse",
     "nanobanana",
     "nebius",
+    "nous",
     "nvidia",
     "oc",
     "ocz",

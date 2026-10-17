@@ -28,6 +28,7 @@ const ALIAS_TOKENS = [
   "br","bedrock","aws-bedrock",
   "brx","bedrock-xai","bedrock-grok",
   "mm","minimax-code","mmg","minimax-code-global",
+  "nous","nous-portal","nous-research","ns",
 ];
 
 // Sort idToAlias by key — runtime accesses by key, order is irrelevant (content-based)

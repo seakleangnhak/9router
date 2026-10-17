@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
+import { GET } from "../../src/app/api/cli-tools/hermes-settings/route.js";
 import {
   PROFILE_NAME_RE,
   isValidProfileName,
@@ -20,10 +21,30 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
 const write = (dir, file, content) => fs.writeFile(path.join(dir, file), content, "utf-8");
+
+describe("Hermes settings response", () => {
+  it.each([["fixture-stt-secret", false], ["${OPENAI_API_KEY}", true]])(
+    "omits STT key %s while preserving configuration and detection",
+    async (apiKey, has9RouterStt) => {
+      vi.spyOn(os, "homedir").mockReturnValue(tmpRoot);
+      const dir = path.join(tmpRoot, ".hermes");
+      await fs.mkdir(dir);
+      await write(dir, "config.yaml", `stt:\n  enabled: true\n  provider: "openai"\n  openai:\n    model: "groq/whisper-large-v3"\n    base_url: "${BASE}"\n    api_key: "${apiKey}"\n`);
+
+      const response = await GET();
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.settings.stt).toMatchObject({ model: "groq/whisper-large-v3", base_url: BASE });
+      expect(body.settings.stt).not.toHaveProperty("api_key");
+      expect(body.has9RouterStt).toBe(has9RouterStt);
+    },
+  );
+});
 
 describe("hermes profile resolution", () => {
   describe("isValidProfileName", () => {
