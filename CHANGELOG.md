@@ -2,6 +2,7 @@
 
 - Merge official 9Router v0.5.104 while preserving API-key Fast modes, combo reasoning ceilings, pricing, request TPS, and TLS/proxy safeguards.
 - Omit saved speech-to-text API keys from Hermes settings responses while retaining audio configuration and 9Router detection.
+- Publish the amd64/arm64 Docker image as `0.5.104-gpt-6.1-sol` and `0.5.104-gpt-6.1-sol-fix`, plus `latest` and the moving GPT-6.1 Sol tags.
 
 # Local integration (2026-10-13)
 
