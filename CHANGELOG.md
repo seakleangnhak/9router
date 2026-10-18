@@ -1,5 +1,6 @@
 # Local integration (2026-10-18)
 
+- Compress Codex Responses tool-output text through Headroom while preserving native calls, reasoning, metadata, and multimodal content; validate every returned text slot before applying changes.
 - Allow remote Headroom dashboard access through a valid 9Router dashboard session; retain local-only Start/Stop controls.
 - Proxy current Headroom dashboard assets, settings links, and stats paths; strip viewer cookies, authorization, and internal peer headers before forwarding.
 

@@ -25,6 +25,7 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
 vi.mock("../../open-sse/utils/stream.js", () => ({
   COLORS: { red: "", reset: "" },
   createPassthroughStreamWithLogger: vi.fn(() => new TransformStream()),
+  createSSETransformStreamWithLogger: vi.fn(() => new TransformStream()),
 }));
 
 vi.mock("@/lib/usageDb.js", () => ({
@@ -207,6 +208,51 @@ describe("handleChatCore Headroom diagnostics", () => {
     const logs = JSON.stringify([...log.info.mock.calls, ...log.warn.mock.calls]);
     expect(logs).not.toContain("saved");
     expect(logs).not.toContain(original);
+  });
+
+  it.each([false, true])("preserves Codex history when Headroom returns an invalid tool ID: %s", async (invalid) => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const body = {
+      model: "gpt-6.1-sol", stream: false,
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "find bug" }] },
+        { type: "reasoning", id: "rs_1", summary: [], encrypted_content: "opaque-reasoning" },
+        { type: "function_call", id: "fc_1", call_id: "call_1", name: "read_file", arguments: '{"path":"src/app.js"}' },
+        { type: "function_call_output", call_id: "call_1", output: "large tool output ".repeat(100) },
+      ],
+      tools: [{ type: "function", name: "read_file", parameters: { type: "object" } }],
+    };
+    const expected = structuredClone(body);
+    if (!invalid) expected.input[3].output = "short tool output";
+    global.fetch = vi.fn(async (_url, init) => {
+      const { messages } = JSON.parse(init.body);
+      const output = messages.find((message) => message.tool_call_id === "call_1");
+      output.content = "short tool output";
+      if (invalid) output.tool_call_id = "wrong_call";
+      return Response.json({ messages, tokens_before: 1000, tokens_after: 100, tokens_saved: 900 });
+    });
+
+    await handleChatCore({
+      body,
+      modelInfo: { provider: "codex", model: "gpt-6.1-sol" },
+      credentials: { accessToken: "test-token", providerSpecificData: {} },
+      log, connectionId: "test-conn",
+      headroomEnabled: true, headroomUrl: "http://localhost:8787",
+      headroomCompressUserMessages: false, rtkEnabled: false,
+      cavemanEnabled: false, ponytailEnabled: false,
+      clientRawRequest: { endpoint: "/v1/responses", body: {}, headers: { accept: "application/json" } },
+    });
+
+    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.objectContaining({ input: expected.input, tools: expected.tools }),
+    }));
+    expect(global.fetch).toHaveBeenCalledOnce();
+    if (invalid) {
+      expect(log.warn).toHaveBeenCalledWith("HEADROOM", expect.stringContaining("text slot identity"));
+    } else {
+      expect(log.info).toHaveBeenCalledWith("HEADROOM", expect.stringContaining("reported token delta=900"));
+    }
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain("opaque-reasoning");
   });
 
   it("does not warn about healthy message compression when tools dominate the body", async () => {
