@@ -287,6 +287,48 @@ describe("dashboard guard local-only access", () => {
   });
 });
 
+describe("Headroom dashboard proxy access", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getSettings.mockResolvedValue({ requireLogin: true });
+    mocks.getConsistentMachineId.mockResolvedValue("cli-token");
+    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+  });
+
+  it.each(["dashboard", "stats", "health", "stats-history", "transformations/feed"])(
+    "allows remote dashboard sessions to access %s behind a reverse proxy",
+    async (path) => {
+      const req = request(`/api/headroom/proxy/${path}`, {
+        host: "airouter.kesspay.io",
+        "x-9r-via-proxy": "1",
+        "x-forwarded-proto": "https",
+      });
+      req.cookies.get.mockReturnValue({ value: "dashboard-session" });
+      mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+      expect(await proxy(req)).toBe(mocks.nextResponse);
+      expect(mocks.verifyDashboardAuthToken).toHaveBeenCalledWith("dashboard-session");
+    },
+  );
+
+  it.each([true, false])("rejects unauthenticated access when requireLogin=%s", async (requireLogin) => {
+    mocks.getSettings.mockResolvedValue({ requireLogin });
+    const response = await proxy(request("/api/headroom/proxy/dashboard", { host: "airouter.kesspay.io" }));
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe("Unauthorized");
+  });
+
+  it("keeps Headroom start and stop local-only for remote dashboard sessions", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+
+    for (const action of ["start", "stop"]) {
+      const response = await proxy(request(`/api/headroom/${action}`, { host: "airouter.kesspay.io" }));
+      expect(response.status).toBe(403);
+    }
+  });
+});
+
 describe("dashboard guard helpers", () => {
   it("extracts bearer API keys before x-api-key", () => {
     const apiRequest = request("/v1/chat/completions", {

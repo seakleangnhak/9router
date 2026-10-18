@@ -1,3 +1,8 @@
+# Local integration (2026-10-18)
+
+- Allow remote Headroom dashboard access through a valid 9Router dashboard session; retain local-only Start/Stop controls.
+- Proxy current Headroom dashboard assets, settings links, and stats paths; strip viewer cookies, authorization, and internal peer headers before forwarding.
+
 # Local integration (2026-10-17)
 
 - Merge official 9Router v0.5.104 while preserving API-key Fast modes, combo reasoning ceilings, pricing, request TPS, and TLS/proxy safeguards.

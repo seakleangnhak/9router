@@ -16,7 +16,6 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 const DASHBOARD_PREFIX = "/api/headroom/proxy";
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 async function getTargetBase() {
   const settings = await getSettings();
@@ -35,24 +34,23 @@ function buildTargetUrl(base, path, search) {
   return target;
 }
 
-function forwardedHeaders(request, target) {
+function forwardedHeaders(request) {
   const headers = new Headers(request.headers);
-  for (const header of headers.keys()) {
-    if (HOP_BY_HOP_HEADERS.has(header.toLowerCase())) headers.delete(header);
+  for (const header of [...headers.keys()]) {
+    // Headroom never needs the viewer's 9Router credentials or internal peer proof.
+    if (HOP_BY_HOP_HEADERS.has(header) || header === "cookie" || header === "authorization" || header.startsWith("x-9r-")) {
+      headers.delete(header);
+    }
   }
   headers.delete("host");
-  // Never leak viewer credentials to a non-loopback Headroom host
-  if (!LOOPBACK_HOSTS.has(target.hostname.replace(/^\[|\]$/g, "").toLowerCase())) {
-    headers.delete("cookie");
-    headers.delete("authorization");
-  }
   return headers;
 }
 
 function rewriteDashboardHtml(html) {
+  // ponytail: rewrite known inline paths until Headroom supports a dashboard base path.
   return html.replace(
-    /fetch\('(?=\/(?:stats|health|stats-history|transformations\/feed))/g,
-    `fetch('${DASHBOARD_PREFIX}`,
+    /(["'`])\/(?=(?:dashboard|settings|stats(?:-lifetime|-history)?|health|transformations\/feed)(?:[/?#"'`]|$))/g,
+    `$1${DASHBOARD_PREFIX}/`,
   );
 }
 
@@ -67,21 +65,22 @@ async function proxy(request, { params }) {
 
     const response = await fetch(target, {
       method,
-      headers: forwardedHeaders(request, target),
+      headers: forwardedHeaders(request),
       body: hasBody ? request.body : undefined,
       duplex: hasBody ? "half" : undefined,
       redirect: "manual",
     });
 
     const headers = new Headers(response.headers);
-    for (const header of headers.keys()) {
+    for (const header of [...headers.keys()]) {
       if (HOP_BY_HOP_HEADERS.has(header.toLowerCase())) headers.delete(header);
     }
 
-    if (path.join("/") === "dashboard") {
+    if (path[0] === "dashboard") {
       const contentType = response.headers.get("content-type") || "";
       if (contentType.includes("text/html")) {
         headers.delete("content-length");
+        headers.delete("content-encoding");
         return new NextResponse(rewriteDashboardHtml(await response.text()), {
           status: response.status,
           headers,
