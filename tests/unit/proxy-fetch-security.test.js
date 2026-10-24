@@ -77,6 +77,29 @@ describe("proxy fetch preserves TLS verification", () => {
     expect(network.ProxyAgent).toHaveBeenLastCalledWith({ uri: proxyUrl, requestTls: { rejectUnauthorized: false } });
     expect(network.Agent).not.toHaveBeenCalled();
   });
+
+  it("honors strictTls even when insecure retries are enabled globally", async () => {
+    vi.stubEnv("STRICT_SSL", "false");
+    const error = new TypeError("fetch failed", { cause: { code: "SELF_SIGNED_CERT_IN_CHAIN" } });
+    network.fetch.mockRejectedValueOnce(error);
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+
+    await expect(proxyAwareFetch("https://api.example.com/v1/chat", { strictTls: true })).rejects.toBe(error);
+    expect(network.fetch).toHaveBeenCalledOnce();
+    expect(network.Agent).not.toHaveBeenCalled();
+  });
+
+  it("allows the direct transport adapter only after required proxy resolution", async () => {
+    const response = new Response("ok");
+    const directFetch = vi.fn(async () => response);
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+
+    await expect(proxyAwareFetch("https://api.example.com/v1/chat", { directFetch }, { proxyPoolId: "inactive", strictProxy: true })).rejects.toThrow(/Proxy required but none resolved/);
+    expect(directFetch).not.toHaveBeenCalled();
+    await expect(proxyAwareFetch("https://api.example.com/v1/chat", { directFetch })).resolves.toBe(response);
+    expect(directFetch).toHaveBeenCalledOnce();
+    expect(network.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe("strict proxy blocks DNS bypass without a resolved proxy", () => {

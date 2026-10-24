@@ -285,6 +285,24 @@ describe("dashboard guard local-only access", () => {
 
     expect(response).toBe(mocks.nextResponse);
   });
+
+  it.each([true, false])("keeps host browser login local-only when requireLogin=%s", async (requireLogin) => {
+    mocks.getSettings.mockResolvedValue({ requireLogin });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect((await proxy(request("/api/providers/web-login", { host: "router.example.com" }))).status).toBe(403);
+  });
+
+  it("requires authentication for local browser login even when dashboard login is disabled", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+    const req = localRequest("/api/providers/web-login", { host: "localhost:20128" });
+    expect((await proxy(req)).status).toBe(401);
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect(await proxy(req)).toBe(mocks.nextResponse);
+  });
+
+  it("allows CLI-authenticated host browser login", async () => {
+    expect(await proxy(request("/api/providers/web-login", { "x-9r-cli-token": "cli-token" }))).toBe(mocks.nextResponse);
+  });
 });
 
 describe("Headroom dashboard proxy access", () => {

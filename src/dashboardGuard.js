@@ -46,6 +46,7 @@ const ALWAYS_PROTECTED = [
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/oauth/zed/auto-import",
+  "/api/providers/web-login",
   "/api/headroom/proxy",
 ];
 
@@ -84,6 +85,7 @@ const LOCAL_ONLY_PATHS = [
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/oauth/zed/auto-import",
+  "/api/providers/web-login",
   "/api/auth/reset-password",
   "/api/headroom/start",
   "/api/headroom/stop",
