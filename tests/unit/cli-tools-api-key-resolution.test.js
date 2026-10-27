@@ -136,7 +136,7 @@ describe("Pi apply settings", () => {
           baseUrl: "http://localhost:20128/v1",
           apiKey: "sk-active",
           api: "openai-completions",
-          models: [{ id: "cx/gpt-6.1-sol", name: "cx/gpt-6.1-sol", contextWindow: 128000, maxTokens: 16384 }],
+          models: [{ id: "cx/gpt-6.1-sol", name: "cx/gpt-6.1-sol", contextWindow: 200000, maxTokens: 64000 }],
         },
       },
     });
@@ -157,11 +157,32 @@ describe("Pi apply settings", () => {
         "9router": {
           ...provider,
           baseUrl: "http://localhost:20128/v1",
-          models: [{ id: "cx/gpt-6.1-sol", name: "cx/gpt-6.1-sol", contextWindow: 128000, maxTokens: 16384 }],
+          models: [{ id: "cx/gpt-6.1-sol", name: "cx/gpt-6.1-sol", contextWindow: 200000, maxTokens: 64000 }],
         },
         other: otherProvider,
       },
       keep: true,
+    });
+    expect(getApiKeys).not.toHaveBeenCalled();
+  });
+
+  it("preserves custom model names and caps unless new caps are selected", async () => {
+    const configPath = path.join(home, ".pi", "agent", "models.json");
+    const modelId = "cx/gpt-6.1-sol";
+    const model = { id: modelId, name: "Work model", contextWindow: 1000000, maxTokens: 128000 };
+    const provider = { baseUrl: "http://localhost:20128/v1", apiKey: "sk-existing", api: "openai-responses", models: [model] };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ providers: { "9router": provider } }));
+
+    const body = { baseUrl: provider.baseUrl, apiKey: "", models: [{ id: modelId, name: modelId }] };
+    expect((await apply(body)).status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8")).providers["9router"]).toEqual(provider);
+
+    const caps = { contextWindow: 262144, maxTokens: 65536 };
+    expect((await apply({ ...body, models: [{ ...body.models[0], ...caps }] })).status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8")).providers["9router"]).toEqual({
+      ...provider,
+      models: [{ ...model, ...caps }],
     });
     expect(getApiKeys).not.toHaveBeenCalled();
   });
