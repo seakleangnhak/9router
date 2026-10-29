@@ -1,3 +1,8 @@
+# Local OpenAI fixes (2026-10-29)
+
+- Align the OpenAI upstream request body's streaming flag with the executor's selected mode so dashboard model tests and JSON clients receive valid completions instead of JSON wrapped as SSE.
+- Add GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra, and GPT-6 Luna to the OpenAI API-key provider catalog; retain the existing API-key authentication and provider routing boundaries.
+
 # Local integration (2026-10-29)
 
 - Merge official 9Router v0.5.112 while preserving Fast modes, reasoning ceilings, pricing, request TPS, TLS/proxy safeguards, and authenticated Headroom access.
