@@ -269,6 +269,11 @@ export async function updateProviderConnection(id, data) {
     const existing = rowToConn(row);
     const normalized = resetHealthStateOnActivation(existing, data);
     const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    // Desktop broker tokens stay in memory, including after a refresh callback.
+    if (merged.authType === "mcode-lease") {
+      delete merged.accessToken;
+      delete merged.refreshToken;
+    }
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;

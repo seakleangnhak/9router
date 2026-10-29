@@ -101,6 +101,46 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
   });
 
+  it.each(["minimax-code", "minimax-code-global"])("providerConnections: %s lease updates discard borrowed tokens", async (provider) => {
+    const metadata = { mcodeDataDir: path.join(tempDir, "minimax-desktop") };
+    const c = await sqliteDb.createProviderConnection({
+      provider, authType: "mcode-lease", name: "Desktop Lease",
+      accessToken: "old-access", refreshToken: "old-refresh",
+      providerSpecificData: metadata,
+    });
+    const updated = await sqliteDb.updateProviderConnection(c.id, {
+      accessToken: "borrowed-access", refreshToken: "borrowed-refresh",
+      lastRefreshAt: "2026-10-29T00:00:00.000Z", testStatus: "active",
+    });
+
+    for (const connection of [updated, await sqliteDb.getProviderConnectionById(c.id)]) {
+      expect(connection).toMatchObject({
+        id: c.id, provider, authType: "mcode-lease", name: "Desktop Lease",
+        providerSpecificData: metadata,
+        lastRefreshAt: "2026-10-29T00:00:00.000Z", testStatus: "active",
+      });
+      expect(connection).not.toHaveProperty("accessToken");
+      expect(connection).not.toHaveProperty("refreshToken");
+    }
+  });
+
+  it("providerConnections: OAuth token rotation persists access and refresh tokens", async () => {
+    const c = await sqliteDb.createProviderConnection({
+      provider: "minimax-code", authType: "oauth", email: "rotation@example.com",
+      accessToken: "old-access", refreshToken: "old-refresh",
+    });
+    const updated = await sqliteDb.updateProviderConnection(c.id, {
+      accessToken: "rotated-access", refreshToken: "rotated-refresh",
+    });
+
+    for (const connection of [updated, await sqliteDb.getProviderConnectionById(c.id)]) {
+      expect(connection).toMatchObject({
+        authType: "oauth", email: "rotation@example.com",
+        accessToken: "rotated-access", refreshToken: "rotated-refresh",
+      });
+    }
+  });
+
   it("providerConnections: successful validation clears stale routing locks", async () => {
     const c = await sqliteDb.createProviderConnection({
       provider: "health-reset-update",

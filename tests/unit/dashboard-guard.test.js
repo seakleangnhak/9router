@@ -303,6 +303,46 @@ describe("dashboard guard local-only access", () => {
   it("allows CLI-authenticated host browser login", async () => {
     expect(await proxy(request("/api/providers/web-login", { "x-9r-cli-token": "cli-token" }))).toBe(mocks.nextResponse);
   });
+
+  describe.each([
+    "/api/oauth/minimax-code/lease-connect",
+    "/api/oauth/minimax-code/lease-status",
+    "/api/oauth/minimax-code-global/lease-connect",
+    "/api/oauth/minimax-code-global/lease-status",
+  ])("MiniMax desktop access: %s", (pathname) => {
+    it.each([true, false])("rejects remote dashboard sessions when requireLogin=%s", async (requireLogin) => {
+      mocks.getSettings.mockResolvedValue({ requireLogin });
+      mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+      const req = request(pathname, { host: "router.example.com" });
+      req.cookies.get.mockReturnValue({ value: "dashboard-session" });
+
+      const response = await proxy(req);
+      expect(response.status).toBe(403);
+      expect(response.body.error).toBe("Local only: CLI token required");
+    });
+
+    it.each([true, false])("rejects local unauthenticated access when requireLogin=%s", async (requireLogin) => {
+      mocks.getSettings.mockResolvedValue({ requireLogin });
+      const req = localRequest(pathname, { host: "localhost:20128", origin: "http://localhost:20128" });
+
+      expect((await proxy(req)).status).toBe(requireLogin ? 403 : 401);
+    });
+
+    it.each([true, false])("allows local dashboard sessions when requireLogin=%s", async (requireLogin) => {
+      mocks.getSettings.mockResolvedValue({ requireLogin });
+      mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+      const req = localRequest(pathname, { host: "localhost:20128", origin: "http://localhost:20128" });
+      req.cookies.get.mockReturnValue({ value: "dashboard-session" });
+
+      expect(await proxy(req)).toBe(mocks.nextResponse);
+      expect(mocks.verifyDashboardAuthToken).toHaveBeenCalledWith("dashboard-session");
+    });
+
+    it.each([true, false])("allows CLI authentication when requireLogin=%s", async (requireLogin) => {
+      mocks.getSettings.mockResolvedValue({ requireLogin });
+      expect(await proxy(request(pathname, { host: "router.example.com", "x-9r-cli-token": "cli-token" }))).toBe(mocks.nextResponse);
+    });
+  });
 });
 
 describe("Headroom dashboard proxy access", () => {
