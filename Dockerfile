@@ -59,12 +59,22 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM ${NODE_IMAGE} AS runner
 ARG ALPINE_MIRROR
+ARG NPM_REGISTRY
 ARG APP_VERSION
 WORKDIR /app
 
 RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     fi
+
+# Keep runtime npm; its bundled ip-address still needs a separate security patch.
+RUN npm install --global --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund npm@11.21.1 && \
+    npm install --prefix /tmp/npm-security-fix --no-save \
+      --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund ip-address@10.7.4 && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+    mv /tmp/npm-security-fix/node_modules/ip-address /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+    rm -rf /tmp/npm-security-fix && \
+    npm cache clean --force
 
 LABEL org.opencontainers.image.title="9router" \
       org.opencontainers.image.version="${APP_VERSION}"

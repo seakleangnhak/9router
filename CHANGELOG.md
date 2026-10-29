@@ -1,3 +1,8 @@
+# Local runtime security fixes (2026-10-29)
+
+- Upgrade the container's bundled npm to 11.21.1 and its ip-address dependency to 10.7.4, addressing all 21 dependency findings reported against the previous image.
+- Keep runtime npm available for PXPIPE setup and lazy dependency installation.
+
 # Local OpenAI fixes (2026-10-29)
 
 - Align the OpenAI upstream request body's streaming flag with the executor's selected mode so dashboard model tests and JSON clients receive valid completions instead of JSON wrapped as SSE.
