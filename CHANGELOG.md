@@ -1,6 +1,6 @@
 # Local runtime security fixes (2026-10-29)
 
-- Upgrade the container's bundled npm to 11.21.1 and its ip-address dependency to 10.7.4, addressing all 21 dependency findings reported against the previous image.
+- Upgrade the container's bundled npm to 11.21.1 and patch its ip-address and undici dependencies to 10.7.4 and 6.29.1 to remove known dependency vulnerabilities.
 - Keep runtime npm available for PXPIPE setup and lazy dependency installation.
 
 # Local OpenAI fixes (2026-10-29)

@@ -67,12 +67,14 @@ RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     fi
 
-# Keep runtime npm; its bundled ip-address still needs a separate security patch.
+# Keep runtime npm; patch its remaining bundled dependencies separately.
 RUN npm install --global --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund npm@11.21.1 && \
     npm install --prefix /tmp/npm-security-fix --no-save \
-      --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund ip-address@10.7.4 && \
-    rm -rf /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+      --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund ip-address@10.7.4 undici@6.29.1 && \
+    rm -rf /usr/local/lib/node_modules/npm/node_modules/ip-address \
+           /usr/local/lib/node_modules/npm/node_modules/undici && \
     mv /tmp/npm-security-fix/node_modules/ip-address /usr/local/lib/node_modules/npm/node_modules/ip-address && \
+    mv /tmp/npm-security-fix/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici && \
     rm -rf /tmp/npm-security-fix && \
     npm cache clean --force
 
