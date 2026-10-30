@@ -20,10 +20,10 @@ import {
 const minute = 60000;
 const start = Date.parse("2026-10-30T05:00:00.000Z");
 
-function currentUsage(used = 80) {
+function currentUsage(used = 80, balance = 55969) {
   return {
     fetchedAt: new Date().toISOString(),
-    credits: { balance: 55969, hasCredits: true, unlimited: false },
+    credits: { balance, hasCredits: balance > 0, unlimited: false },
     quotas: {
       session: { used, total: 100, remaining: 100 - used, resetAt: new Date(start + 3 * 60 * minute).toISOString() },
       weekly: { used: 20, total: 100, remaining: 80, resetAt: new Date(start + 3 * 24 * 60 * minute).toISOString() },
@@ -132,6 +132,47 @@ describe("Codex automatic redemption service", () => {
     expect(account.awaitingReset).toMatchObject({ session: { used: 80 }, weekly: { used: 20 } });
     expect(account.lastResetAt).toBe(new Date(start).toISOString());
     expect(deps.releaseCodexResetAccount).toHaveBeenCalled();
+  });
+
+  it("Smart waits for usage credits to reach zero before redeeming exhausted quota", async () => {
+    config.mode = "smart";
+    const exhausted = currentUsage(100, 55968.1592845);
+    account.history = [{ at: start - minute, balance: 56000, quotas: exhausted.quotas }];
+    deps.getCodexUsage.mockResolvedValue(exhausted);
+
+    await runCodexAutoResetTick(deps, state);
+    expect(deps.consumeCodexRateLimitResetCredit).not.toHaveBeenCalled();
+    expect(config.reason).toMatch(/Usage credits remain/);
+
+    deps.getCodexUsage.mockImplementation(async () => currentUsage(100, 0));
+    await runCodexAutoResetTick(deps, state);
+    expect(deps.consumeCodexRateLimitResetCredit).toHaveBeenCalledOnce();
+    expect(deps.consumeCodexRateLimitResetCredit.mock.calls[0][3]).toBe("reset_first");
+  });
+
+  it.each([
+    ["available", 55968.1592845], ["redeemed", 55968.1592845], ["expired", 55968.1592845], ["missing", 55968.1592845], ["redeemed", 0],
+  ])("Smart retains pending request without replay while credits remain or conflict: %s, %s", async (status, balance) => {
+    config.mode = "smart";
+    account.pending = {
+      redeemRequestId: "uncertain-smart-request", creditId: "reset_first", mode: "smart",
+      credit: { id: "reset_first", status: "available", resetType: "codexRateLimits", expiresAt: new Date(start + 9 * minute).toISOString() },
+      preResetQuotas: currentUsage(100, 0).quotas,
+    };
+    const pending = { ...account.pending };
+    const exhausted = currentUsage(100, balance);
+    exhausted.credits.hasCredits = true;
+    account.history = [{ at: start - minute, balance: 56000, quotas: exhausted.quotas }];
+    deps.getCodexUsage.mockResolvedValue(exhausted);
+    const currentBank = await deps.getCodexRateLimitResetCredits();
+    currentBank.credits.find((credit) => credit.id === "reset_first").status = status;
+    if (status === "missing") Object.assign(currentBank, { availableCount: 0, credits: [] });
+    deps.getCodexRateLimitResetCredits.mockResolvedValue(currentBank);
+
+    await runCodexAutoResetTick(deps, { running: false });
+    expect(deps.consumeCodexRateLimitResetCredit).not.toHaveBeenCalled();
+    expect(account.pending).toEqual(pending);
+    expect(config.reason).toMatch(/Usage credits remain/);
   });
 
   it("requires an actual usage drop before clearing restored-quota confirmation", async () => {

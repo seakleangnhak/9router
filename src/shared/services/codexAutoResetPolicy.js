@@ -89,6 +89,9 @@ export function getCodexResetDecision({ mode, usage, bank, history = [], nowMs =
   if (!fresh(usage?.fetchedAt, nowMs) || !fresh(bank?.fetchedAt, nowMs)) return result("Waiting for fresh quota, credit balance, and reset-bank data.");
   if (!knownBalance(usage.credits)) return result("Usage-credit balance unknown; automatic redemption paused.");
   if (usage.credits.unlimited === true) return result("Unlimited usage credits; no automatic reset needed.");
+  if (mode === "smart" && (usage.credits.balance > 0 || usage.credits.hasCredits === true)) {
+    return result("Usage credits remain; Smart reset paused until their balance reaches zero.");
+  }
 
   const quotas = QUOTA_KEYS.map((key) => [key, usage.quotas?.[key]]).filter(([, quota]) => quota != null);
   if (!quotas.length || quotas.some(([, quota]) => !validQuota(quota) || timestamp(quota.resetAt) <= nowMs)) {
@@ -120,7 +123,7 @@ export function getCodexResetDecision({ mode, usage, bank, history = [], nowMs =
     if (forecast.runwayMs >= resetInMs - C.naturalResetGuardMs) continue;
     shortestRunway = Math.min(shortestRunway, forecast.runwayMs);
     if (100 - quota.used <= forecast.nextWork) {
-      return result(`Recent usage may exhaust ${key} quota before the next workload; preserving usage credits.`, credit, true);
+      return result(`Recent usage may exhaust ${key} quota before the next workload; restoring quota.`, credit, true);
     }
     if (expiresInMs <= forecast.workLeadMs) {
       return result(`Reset expires before the next expected workload; restoring ${key} quota.`, credit, true);

@@ -128,6 +128,7 @@ async function checkConnection(connectionId, deps) {
     // An uncertain POST always retains its original ID and selected credit, including after restart.
     const pending = account.pending;
     if (!decision.redeem && !pending) return;
+    if (pending && config.mode === "smart" && (usage.credits?.balance > 0 || usage.credits?.hasCredits === true)) return;
     if (pending && (!freshRetryData(usage, bank, nowMs) || pending.mode !== config.mode)) {
       await report({ reason: "Previous redemption unconfirmed; waiting for fresh data and its original reset mode. Manual requests must be retried manually." });
       return;
@@ -182,7 +183,7 @@ async function checkConnection(connectionId, deps) {
     const verified = await readUsage(connection, proxy, deps);
     if (resetObserved(account.awaitingReset, verified.usage)) {
       await saveAccount({ awaitingReset: null, history: observeCodexUsage([], verified.usage, Date.now()) });
-      await report({ reason: "Reset redeemed and quota refreshed; preserving usage credits." });
+      await report({ reason: "Reset redeemed and quota refreshed." });
     }
   } catch {
     // Provider errors can include credentials or account details; keep dashboard and logs generic.

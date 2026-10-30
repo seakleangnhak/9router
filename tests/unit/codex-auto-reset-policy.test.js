@@ -13,7 +13,7 @@ const hour = 60 * minute;
 function usage(used = 80, resetIn = 3 * hour) {
   return {
     fetchedAt: iso(0),
-    credits: { balance: 55969, hasCredits: true, unlimited: false },
+    credits: { balance: 0, hasCredits: false, unlimited: false },
     quotas: {
       session: { used, total: 100, remaining: 100 - used, resetAt: iso(resetIn) },
       weekly: { used: 20, total: 100, remaining: 80, resetAt: iso(3 * 24 * hour) },
@@ -29,7 +29,7 @@ function bank(expiresIn = 5 * minute) {
   };
 }
 
-function history(currentUsage, previousUsed, { previousBalance = 55969, minutesAgo = 1 } = {}) {
+function history(currentUsage, previousUsed, { previousBalance = currentUsage.credits.balance, minutesAgo = 1 } = {}) {
   return [{
     at: now - minutesAgo * minute,
     balance: previousBalance,
@@ -52,14 +52,18 @@ describe("Codex automatic reset policy", () => {
   });
 
   it("Auto redeems only near expiry and preserves a positive usage-credit balance", () => {
-    expect(decide()).toMatchObject({ redeem: true, credit: { id: "reset_1" } });
-    expect(decide({ bank: bank(C.autoLeadMs + 1) }).redeem).toBe(false);
+    const current = usage();
+    current.credits = { balance: 55969, hasCredits: true, unlimited: false };
+    expect(decide({ usage: current })).toMatchObject({ redeem: true, credit: { id: "reset_1" } });
+    expect(decide({ usage: current, bank: bank(C.autoLeadMs + 1) }).redeem).toBe(false);
   });
 
   it.each([null, undefined, "55969", NaN, Infinity, -1])("pauses when usage-credit balance is unknown or invalid: %s", (balance) => {
     const current = usage();
     current.credits.balance = balance;
-    expect(decide({ usage: current })).toMatchObject({ redeem: false, reason: expect.stringContaining("balance unknown") });
+    for (const mode of ["auto", "smart"]) {
+      expect(decide({ mode, usage: current })).toMatchObject({ redeem: false, reason: expect.stringContaining("balance unknown") });
+    }
   });
 
   it("accepts a known zero balance without conflating it with missing data", () => {
@@ -124,6 +128,22 @@ describe("Codex automatic reset policy", () => {
     expect(decide({ mode: "smart", usage: current, history: history(current, 100) }).redeem).toBe(false);
   });
 
+  it.each([
+    [55968.1592845, true], [0.000001, true], [55968.1592845, false], [55968.1592845, null], [0, true],
+  ])("Smart retains resets while credits remain or their availability conflicts: %s, %s", (balance, hasCredits) => {
+    const current = usage(100);
+    current.credits = { balance, hasCredits, unlimited: false };
+    expect(decide({ mode: "smart", usage: current, bank: bank(minute), history: history(current, 100, { previousBalance: 56000 }) })).toMatchObject({
+      redeem: false, reason: expect.stringContaining("Usage credits remain"),
+    });
+  });
+
+  it.each([[95, 85, 4 * 24 * hour], [40, 39, minute]])("Smart keeps usage credits ahead of workload and expiry triggers: %s", (used, previousUsed, expiresIn) => {
+    const current = usage(used);
+    current.credits = { balance: 55968.1592845, hasCredits: true, unlimited: false };
+    expect(decide({ mode: "smart", usage: current, bank: bank(expiresIn), history: history(current, previousUsed) }).redeem).toBe(false);
+  });
+
   it("Smart reacts sooner to a heavy workload than a light workload at identical quota usage", () => {
     const current = usage(95);
     const args = { mode: "smart", usage: current, bank: bank(4 * 24 * hour) };
@@ -152,7 +172,7 @@ describe("Codex automatic reset policy", () => {
     });
   });
 
-  it("Smart uses credit spending as activity only when quota is already exhausted", () => {
+  it("Smart uses depleted credits as activity only when quota is already exhausted", () => {
     const exhausted = usage(100);
     expect(decide({ mode: "smart", usage: exhausted, history: history(exhausted, 100, { previousBalance: 56000 }) }).redeem).toBe(true);
     const partial = usage(80);
@@ -195,7 +215,7 @@ describe("Codex usage observations", () => {
     rows.push({ at: now + 1, quotas: {} }, { at: now - C.historyMaxAgeMs - 1, quotas: {} });
     const observed = observeCodexUsage(rows, current, now);
     expect(observed).toHaveLength(C.historyMaxEntries);
-    expect(observed.at(-1)).toMatchObject({ at: now, balance: 55969 });
+    expect(observed.at(-1)).toMatchObject({ at: now, balance: 0 });
     expect(observed.filter((sample) => sample.at === now)).toHaveLength(1);
   });
 

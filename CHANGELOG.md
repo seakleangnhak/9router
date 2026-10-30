@@ -2,6 +2,7 @@
 
 - Track usage-credit balances separately from included quotas and reset-bank credits, preserving unknown and zero balances.
 - Add per-account Off, Auto (near expiry), and Smart (usage-based timing) reset modes to Quota Tracker, disabled by default.
+- Keep reset-bank credits in Smart mode while usage credits remain, including pending redemption retries; Auto still redeems near expiry.
 - Require fresh quota, balance, and reset-bank data before automatic redemption; persist selected credit IDs, account locks, and redemption IDs across retries and restarts.
 - Require dashboard authentication and account-specific spending acknowledgment to enable automation; pause when native SQLite durability or account metadata is unavailable, and disable automation when the connected account changes.
 

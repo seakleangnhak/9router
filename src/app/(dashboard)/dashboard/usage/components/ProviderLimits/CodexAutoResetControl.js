@@ -136,7 +136,7 @@ export default function CodexAutoResetControl({ connectionId, credits, creditLoa
         <p id={`${labelId}-confirm-description`} className="mt-2 text-sm text-text-muted">
           {pendingMode === "auto"
             ? "Redeem reset credits shortly before expiry when used quota can be restored."
-            : "Use recent consumption and credit expiry to choose when to restore used quota."}
+            : "Wait until usage credits are exhausted, then use recent consumption and credit expiry to choose when to restore used quota."}
           {" "}9Router checks quota, usage credits, and reset-bank details first. Each redemption spends one reset credit and cannot be undone.
         </p>
         <div className="mt-4 flex flex-wrap justify-end gap-2">
