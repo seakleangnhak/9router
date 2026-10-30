@@ -1,3 +1,10 @@
+# Local Codex quota automation (2026-10-30)
+
+- Track usage-credit balances separately from included quotas and reset-bank credits, preserving unknown and zero balances.
+- Add per-account Off, Auto (near expiry), and Smart (usage-based timing) reset modes to Quota Tracker, disabled by default.
+- Require fresh quota, balance, and reset-bank data before automatic redemption; persist selected credit IDs, account locks, and redemption IDs across retries and restarts.
+- Require dashboard authentication and account-specific spending acknowledgment to enable automation; pause when native SQLite durability or account metadata is unavailable, and disable automation when the connected account changes.
+
 # Local runtime security fixes (2026-10-29)
 
 - Upgrade the container's bundled npm to 11.21.1 and patch its ip-address and undici dependencies to 10.7.4 and 6.29.1 to remove known dependency vulnerabilities.

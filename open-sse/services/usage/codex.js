@@ -3,6 +3,7 @@
  */
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { FETCH_CONNECT_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { U, parseResetTime, toFiniteNumber } from "./shared.js";
 
 // Codex (OpenAI) API config
@@ -28,8 +29,30 @@ function errorMessage(value, fallback) {
   return JSON.stringify(value);
 }
 
-function getCodexAccountId(providerSpecificData) {
-  return providerSpecificData?.workspaceId || providerSpecificData?.accountId || providerSpecificData?.chatgptAccountId || null;
+export function getCodexAccountId(providerSpecificData) {
+  return [providerSpecificData?.workspaceId, providerSpecificData?.chatgptAccountId, providerSpecificData?.accountId]
+    .find((value) => typeof value === "string" && value.trim())?.trim() || null;
+}
+
+function codexHeaders(accessToken, providerSpecificData) {
+  const headers = {
+    "Authorization": `Bearer ${accessToken}`,
+    "Accept": "application/json",
+    "OpenAI-Beta": "codex-1",
+    "originator": "codex_cli_rs",
+  };
+  const accountId = getCodexAccountId(providerSpecificData);
+  if (accountId) headers["ChatGPT-Account-ID"] = accountId;
+  return headers;
+}
+
+function formatUsageCredits(credits) {
+  const balance = toFiniteNumber(credits?.balance, null);
+  return {
+    balance: balance !== null && balance >= 0 ? balance : null,
+    hasCredits: typeof credits?.has_credits === "boolean" ? credits.has_credits : null,
+    unlimited: credits?.unlimited === true,
+  };
 }
 
 function getCodexRateLimitBody(snapshot) {
@@ -40,11 +63,12 @@ function getCodexRateLimitBody(snapshot) {
 }
 
 function formatCodexWindow(window) {
-  const used = Math.max(0, Math.min(100, toFiniteNumber(window?.used_percent ?? window?.percent_used, 0)));
+  const percent = toFiniteNumber(window?.used_percent ?? window?.percent_used, null);
+  const used = percent !== null && percent >= 0 && percent <= 100 ? percent : null;
   return {
     used,
     total: 100,
-    remaining: Math.max(0, 100 - used),
+    remaining: used === null ? null : 100 - used,
     resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null),
     unlimited: false,
   };
@@ -104,14 +128,13 @@ function getCodexSparkRateLimit(data) {
   }) || null;
 }
 
-export async function getCodexUsage(accessToken, proxyOptions = null) {
+export async function getCodexUsage(accessToken, proxyOptions = null, providerSpecificData = null) {
   try {
     const response = await proxyAwareFetch(CODEX_CONFIG.usageUrl, {
       method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Accept": "application/json",
-      },
+      cache: "no-store",
+      headers: codexHeaders(accessToken, providerSpecificData),
+      signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS),
     }, proxyOptions);
 
     if (!response.ok) {
@@ -134,6 +157,8 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
       limitReached: getCodexRateLimitBody(normalRateLimit)?.limit_reached || false,
       reviewLimitReached: getCodexRateLimitBody(reviewRateLimit)?.limit_reached || false,
       sparkLimitReached: getCodexRateLimitBody(sparkRateLimit)?.limit_reached || false,
+      credits: formatUsageCredits(data.credits),
+      fetchedAt: new Date().toISOString(),
       resetCredits: { availableCount: availableResetCredits },
       quotas,
     };
@@ -147,18 +172,11 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
     throw new Error("No Codex access token available. Please re-authorize the connection.");
   }
 
-  const accountId = getCodexAccountId(providerSpecificData);
-  const headers = {
-    "Authorization": `Bearer ${accessToken}`,
-    "Accept": "application/json",
-    "OpenAI-Beta": "codex-1",
-    "originator": "codex_cli_rs",
-  };
-  if (accountId) headers["ChatGPT-Account-ID"] = accountId;
-
   const response = await proxyAwareFetch(CODEX_CONFIG.resetCreditsUrl, {
     method: "GET",
-    headers,
+    cache: "no-store",
+    headers: codexHeaders(accessToken, providerSpecificData),
+    signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS),
   }, proxyOptions);
 
   let data = null;
@@ -174,9 +192,15 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
   }
 
   const credits = Array.isArray(data?.credits) ? data.credits : [];
+  const availableCount = toFiniteNumber(data?.available_count ?? data?.availableCount, null);
   return {
-    availableCount: Math.max(0, toFiniteNumber(data?.available_count ?? data?.availableCount, 0)),
+    fetchedAt: new Date().toISOString(),
+    availableCount: Number.isInteger(availableCount) && availableCount >= 0 ? availableCount : null,
     credits: credits.map((credit) => ({
+      id: typeof credit?.id === "string" && credit.id.trim() ? credit.id : null,
+      resetType: typeof (credit?.reset_type ?? credit?.resetType) === "string"
+        ? credit.reset_type ?? credit.resetType
+        : null,
       status: String(credit?.status || "unknown"),
       grantedAt: toIsoDate(credit?.granted_at ?? credit?.grantedAt),
       expiresAt: toIsoDate(credit?.expires_at ?? credit?.expiresAt),
@@ -185,12 +209,15 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
 }
 
 // Consume one Codex rate-limit reset credit (irreversible, spends 1 credit)
-export async function consumeCodexRateLimitResetCredit(accessToken, redeemRequestId, proxyOptions = null) {
+export async function consumeCodexRateLimitResetCredit(accessToken, redeemRequestId, proxyOptions = null, creditId = null, providerSpecificData = null) {
   if (!accessToken) {
     throw new Error("No Codex access token available. Please re-authorize the connection.");
   }
-  if (!redeemRequestId || typeof redeemRequestId !== "string") {
+  if (typeof redeemRequestId !== "string" || !redeemRequestId.trim()) {
     throw new Error("A redeem request id is required to consume a Codex reset credit.");
+  }
+  if (creditId !== null && (typeof creditId !== "string" || !creditId.trim())) {
+    throw new Error("A non-empty Codex reset credit id is required.");
   }
 
   let response;
@@ -199,11 +226,11 @@ export async function consumeCodexRateLimitResetCredit(accessToken, redeemReques
     response = await proxyAwareFetch(CODEX_CONFIG.resetCreditsConsumeUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Accept": "application/json",
+        ...codexHeaders(accessToken, providerSpecificData),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ redeem_request_id: redeemRequestId }),
+      body: JSON.stringify({ redeem_request_id: redeemRequestId, ...(creditId !== null ? { credit_id: creditId } : {}) }),
+      signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS),
     }, proxyOptions);
 
     const text = await response.text();
@@ -214,7 +241,7 @@ export async function consumeCodexRateLimitResetCredit(accessToken, redeemReques
 
   const code = data?.code || null;
   const windowsReset = toFiniteNumber(data?.windows_reset, 0);
-  const success = response.ok && (code === "reset" || windowsReset > 0);
+  const success = response.ok && (code === "reset" || code === "already_redeemed" || (!code && windowsReset > 0));
 
   return {
     ok: success,

@@ -152,7 +152,8 @@ export async function GET(request, { params }) {
     const isApikeyEligible =
       isApikeyAuth && USAGE_APIKEY_PROVIDERS.includes(connection.provider);
 
-    if (!isOAuth && !isApikeyEligible) {
+    const isCodexAccessToken = connection.provider === "codex" && connection.authType === "access_token";
+    if (!isOAuth && !isApikeyEligible && !isCodexAccessToken) {
       return Response.json({ message: "Usage not available for this connection" });
     }
 

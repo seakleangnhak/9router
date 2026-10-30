@@ -22,6 +22,16 @@ export const QUOTA_SORT_OPTIONS = [
 ];
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
+export function formatCodexCreditBalance(credits, locale) {
+  if (credits?.unlimited === true) return "Unlimited";
+  if (typeof credits?.balance === "number" && Number.isFinite(credits.balance) && credits.balance >= 0) {
+    return credits.balance.toLocaleString(locale, { maximumFractionDigits: 20 });
+  }
+  if (credits?.hasCredits === true) return "Available (balance unavailable)";
+  if (credits?.hasCredits === false) return "None available";
+  return "Unknown";
+}
+
 export function getConnectionLabel(connection) {
   return connection.name?.trim()
     || connection.email?.trim()

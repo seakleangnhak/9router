@@ -10,5 +10,8 @@ export async function register() {
 
     const { startModelCatalogSync } = await import("@/lib/modelCatalog/sync.js");
     startModelCatalogSync();
+
+    const { configureCodexAutoReset } = await import("@/shared/services/codexAutoReset.js");
+    await configureCodexAutoReset();
   }
 }

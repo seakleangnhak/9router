@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
+import CodexAutoResetControl from "./CodexAutoResetControl";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
 import {
@@ -1132,6 +1133,52 @@ export default function ProviderLimits() {
           const rawQuotas = quota?.quotas || [];
           const visibleQuotas = filterQuotasByVisibility(conn.provider, rawQuotas, quotaVisibility);
           const hiddenQuotaRows = getHiddenQuotaRows(conn.provider, rawQuotas, quotaVisibility);
+          const canAutoReset = isCodex && (conn.authType === "oauth" || conn.authType === "access_token");
+          const resetControls = (isCodex || claudeReset) && (
+            <>
+              <Tooltip
+                text={
+                  resetCreditCount > 0
+                    ? claudeReset
+                      ? `Use your reset now (${resetCreditCount} left, use by ${formatCreditDate(claudeReset.expiresAt)}) · refills ${formatClaudeResetClears(claudeReset.clears)}`
+                      : `Use one ${resetLabel}. Available: ${resetCreditCount}`
+                    : `No ${resetLabel}s available`
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => setResetConfirmState({ connection: conn, resetCreditCount })}
+                  disabled={resetCreditCount <= 0 || isLoading || rowBusy}
+                  aria-label={
+                    resetCreditCount > 0
+                      ? `Use one ${resetLabel}. ${resetCreditCount} available.`
+                      : `No ${resetLabel}s available`
+                  }
+                  className={`flex h-8 min-w-10 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium tabular-nums transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/60 disabled:cursor-not-allowed disabled:opacity-60 ${
+                    resetCreditCount > 0
+                      ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
+                      : "border-black/10 bg-black/[0.02] text-text-muted dark:border-white/10 dark:bg-white/[0.03]"
+                  }`}
+                >
+                  <span className={`material-symbols-outlined text-[15px] ${isResettingLimit ? "animate-spin" : ""}`}>
+                    {isResettingLimit ? "progress_activity" : "restart_alt"}
+                  </span>
+                  <span>{resetCreditCount}</span>
+                </button>
+              </Tooltip>
+              <Tooltip text={isCodex ? "View Codex reset credit expiry" : "View Claude Code reset expiry"}>
+                <button
+                  type="button"
+                  onClick={() => (isCodex ? handleViewCodexResetCredits(conn) : handleViewClaudeResets(conn, claudeReset))}
+                  disabled={isLoading || rowBusy}
+                  aria-label={isCodex ? "View Codex reset credit expiry" : "View Claude Code reset expiry"}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
+                >
+                  <span className="material-symbols-outlined text-[17px]">schedule</span>
+                </button>
+              </Tooltip>
+            </>
+          );
 
           return (
             <Card
@@ -1211,51 +1258,7 @@ export default function ProviderLimits() {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
-                    {(isCodex || claudeReset) && (
-                      <>
-                        <Tooltip
-                          text={
-                            resetCreditCount > 0
-                              ? claudeReset
-                                ? `Use your reset now (${resetCreditCount} left, use by ${formatCreditDate(claudeReset.expiresAt)}) · refills ${formatClaudeResetClears(claudeReset.clears)}`
-                                : `Use one ${resetLabel}. Available: ${resetCreditCount}`
-                              : `No ${resetLabel}s available`
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setResetConfirmState({ connection: conn, resetCreditCount })}
-                            disabled={resetCreditCount <= 0 || isLoading || rowBusy}
-                            aria-label={
-                              resetCreditCount > 0
-                                ? `Use one ${resetLabel}. ${resetCreditCount} available.`
-                                : `No ${resetLabel}s available`
-                            }
-                            className={`flex h-8 min-w-10 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium tabular-nums transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/60 disabled:cursor-not-allowed disabled:opacity-60 ${
-                              resetCreditCount > 0
-                                ? "border-primary/30 bg-primary/5 text-primary hover:bg-primary/10"
-                                : "border-black/10 bg-black/[0.02] text-text-muted dark:border-white/10 dark:bg-white/[0.03]"
-                            }`}
-                          >
-                            <span className={`material-symbols-outlined text-[15px] ${isResettingLimit ? "animate-spin" : ""}`}>
-                              {isResettingLimit ? "progress_activity" : "restart_alt"}
-                            </span>
-                            <span>{resetCreditCount}</span>
-                          </button>
-                        </Tooltip>
-                        <Tooltip text={isCodex ? "View Codex reset credit expiry" : "View Claude Code reset expiry"}>
-                          <button
-                            type="button"
-                            onClick={() => (isCodex ? handleViewCodexResetCredits(conn) : handleViewClaudeResets(conn, claudeReset))}
-                            disabled={isLoading || rowBusy}
-                            aria-label={isCodex ? "View Codex reset credit expiry" : "View Claude Code reset expiry"}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
-                          >
-                            <span className="material-symbols-outlined text-[17px]">schedule</span>
-                          </button>
-                        </Tooltip>
-                      </>
-                    )}
+                    {!canAutoReset && resetControls}
                     {AUTO_PING_SETTINGS_KEYS[conn.provider] && conn.authType === "oauth" && (() => {
                       const cfg = autoPingConfigs[conn.provider] || {};
                       const isReactive = cfg.connections?.[conn.id] === true;
@@ -1354,6 +1357,17 @@ export default function ProviderLimits() {
                   </div>
                 </div>
               </div>
+
+              {canAutoReset && (
+                <CodexAutoResetControl
+                  connectionId={conn.id}
+                  credits={error || quota?.message ? null : quota?.raw?.credits}
+                  creditLoading={Boolean(isLoading)}
+                  disabled={rowBusy}
+                >
+                  {resetControls}
+                </CodexAutoResetControl>
+              )}
 
               <div className="px-2 py-1.5">
                 {isLoading ? (

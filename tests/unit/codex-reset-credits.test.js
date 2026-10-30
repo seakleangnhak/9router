@@ -15,6 +15,14 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 
 vi.mock("open-sse/index.js", () => ({}));
 
+vi.mock("@/shared/services/codexAutoReset.js", () => ({
+  codexResetAccountKey: (connection) => connection.providerSpecificData?.workspaceId || connection.providerSpecificData?.chatgptAccountId || null,
+  withManualCodexResetLock: async (_connection, redeem) => {
+    const redeemRequestId = "test-redeem-id";
+    return { ...await redeem(redeemRequestId, null), redeemRequestId };
+  },
+}));
+
 vi.mock("@/lib/localDb", () => ({
   getProviderConnectionById: mocks.getProviderConnectionById,
 }));
@@ -47,6 +55,8 @@ describe("Codex reset credits", () => {
         available_count: 2,
         credits: [
           {
+            id: "credit-1",
+            reset_type: "codex_rate_limits",
             status: "available",
             granted_at: "2026-06-18T00:25:18Z",
             expires_at: "2026-07-18T00:25:18Z",
@@ -75,14 +85,19 @@ describe("Codex reset credits", () => {
       { strictProxy: false },
     );
     expect(result).toEqual({
+      fetchedAt: expect.any(String),
       availableCount: 2,
       credits: [
         {
+          id: "credit-1",
+          resetType: "codex_rate_limits",
           status: "available",
           grantedAt: "2026-06-18T00:25:18.000Z",
           expiresAt: "2026-07-18T00:25:18.000Z",
         },
         {
+          id: null,
+          resetType: null,
           status: "redeemed",
           grantedAt: null,
           expiresAt: null,
@@ -100,6 +115,71 @@ describe("Codex reset credits", () => {
 
     const { getCodexRateLimitResetCredits } = await import("../../open-sse/services/usage/codex.js");
     await expect(getCodexRateLimitResetCredits("token")).rejects.toThrow("Reset credits are unavailable for this account");
+  });
+
+  it.each([undefined, null, "", " \t ", -1, "-1", 1.5, "1.5", Infinity, NaN, true, false, {}, []])(
+    "preserves invalid reset-bank count %j as unknown",
+    async (availableCount) => {
+      mocks.proxyAwareFetch.mockResolvedValue({
+        ok: true, status: 200,
+        json: async () => ({ available_count: availableCount, credits: [] }),
+      });
+      const { getCodexRateLimitResetCredits } = await import("../../open-sse/services/usage/codex.js");
+      expect((await getCodexRateLimitResetCredits("token")).availableCount).toBeNull();
+    },
+  );
+
+  it.each([0, "0", 2, "2"])("preserves known reset-bank count %j", async (availableCount) => {
+    mocks.proxyAwareFetch.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ available_count: availableCount, credits: [] }),
+    });
+    const { getCodexRateLimitResetCredits } = await import("../../open-sse/services/usage/codex.js");
+    expect((await getCodexRateLimitResetCredits("token")).availableCount).toBe(Number(availableCount));
+  });
+
+  it("redeems the selected credit with account scope and a reusable request id", async () => {
+    mocks.proxyAwareFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ code: "reset", windows_reset: 2 }),
+    });
+    const { consumeCodexRateLimitResetCredit } = await import("../../open-sse/services/usage/codex.js");
+
+    const result = await consumeCodexRateLimitResetCredit("token", "redeem-1", null, "credit-1", { chatgptAccountId: "acct_123" });
+
+    expect(result).toMatchObject({ ok: true, windowsReset: 2, code: "reset" });
+    const [, options] = mocks.proxyAwareFetch.mock.calls[0];
+    expect(JSON.parse(options.body)).toEqual({ redeem_request_id: "redeem-1", credit_id: "credit-1" });
+    expect(options.headers["ChatGPT-Account-ID"]).toBe("acct_123");
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each([
+    ["already_redeemed", true],
+    ["nothing_to_reset", false],
+    ["no_credit", false],
+    ["unknown", false],
+  ])("handles %s without treating every successful HTTP response as a reset", async (code, ok) => {
+    mocks.proxyAwareFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ code, windows_reset: 0 }),
+    });
+    const { consumeCodexRateLimitResetCredit } = await import("../../open-sse/services/usage/codex.js");
+
+    const result = await consumeCodexRateLimitResetCredit("token", "redeem-1");
+
+    expect(result.ok).toBe(ok);
+    expect(JSON.parse(mocks.proxyAwareFetch.mock.calls[0][1].body)).toEqual({ redeem_request_id: "redeem-1" });
+  });
+
+  it("rejects blank redemption and credit ids before contacting upstream", async () => {
+    const { consumeCodexRateLimitResetCredit } = await import("../../open-sse/services/usage/codex.js");
+
+    await expect(consumeCodexRateLimitResetCredit("token", "  ")).rejects.toThrow("redeem request id");
+    await expect(consumeCodexRateLimitResetCredit("token", "redeem-1", null, "")).rejects.toThrow("credit id");
+    expect(mocks.proxyAwareFetch).not.toHaveBeenCalled();
   });
 
   it("GET refreshes OAuth credentials before returning reset credit details", async () => {
@@ -204,6 +284,8 @@ describe("Codex reset credits", () => {
       "token",
       expect.any(String),
       expect.objectContaining({ strictProxy: false }),
+      null,
+      {},
     );
   });
 });
