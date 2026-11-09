@@ -17,7 +17,7 @@ const { buildModelsList } = await import("../../src/app/api/v1/models/route.js")
 
 const syncedLimits = { contextWindow: 180000, maxOutput: 16000 };
 
-async function modelsWithCombo(providerId, modelId, combos) {
+async function modelsWithCombo(providerId, modelId, combos, kindFilter = ["llm"]) {
   db.getProviderConnections.mockResolvedValue([{
     id: 1,
     provider: providerId,
@@ -31,13 +31,36 @@ async function modelsWithCombo(providerId, modelId, combos) {
       provider === providerId && model === modelId ? syncedLimits : null,
   });
   try {
-    return await buildModelsList(["llm"]);
+    return await buildModelsList(kindFilter);
   } finally {
     setCatalogSource(null);
   }
 }
 
 describe("/v1/models combo limits", () => {
+  it("publishes image combos with their kind and no text limits", async () => {
+    const models = await modelsWithCombo("openai", "gpt-image-1", [
+      { name: "image-combo", kind: "image", models: ["cx/gpt-image-2.6-flare", "openai/gpt-image-1"] },
+      { name: "chat-combo", models: ["openai/gpt-4o"] },
+    ], ["image"]);
+
+    expect(models.find((model) => model.id === "image-combo")).toEqual({
+      id: "image-combo", object: "model", owned_by: "combo", kind: "image",
+    });
+    expect(models.some((model) => model.id === "chat-combo")).toBe(false);
+  });
+
+  it("excludes image combos from the default LLM catalog", async () => {
+    const models = await modelsWithCombo("openai", "gpt-4o", [
+      { name: "image-combo", kind: "image", models: ["openai/gpt-image-1"] },
+      { name: "legacy-chat-combo", models: ["openai/gpt-4o"] },
+      { name: "chat-combo", kind: "llm", models: ["openai/gpt-4o"] },
+    ]);
+
+    expect(models.filter((model) => model.owned_by === "combo").map((model) => model.id))
+      .toEqual(["legacy-chat-combo", "chat-combo"]);
+  });
+
   it.each([
     ["ocg", "opencode-go", "mimo-v2.5"],
     ["xmtp", "xiaomi-tokenplan", "mimo-v2.5"],

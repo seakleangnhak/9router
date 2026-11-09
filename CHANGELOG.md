@@ -1,3 +1,10 @@
+# Local image combos (2026-11-09)
+
+- Enable image model combos under Text to Image with ordered fallback, round-robin, and image test previews.
+- Preserve image JSON, binary, and SSE responses without chat-content checks triggering duplicate generation; keep API-key model restrictions enforced before provider access.
+- Keep image combos out of chat model pickers and expose their image kind in model listings.
+- Fix combo test cleanup, provider alias labels, saved strategy overrides, and failed-save model state.
+
 # Local integration (2026-11-09)
 
 - Merge official 9Router v0.5.116 while preserving Codex usage-credit safeguards, Headroom support, OpenAI streaming and models, Fast modes, reasoning ceilings, pricing, and request TPS.

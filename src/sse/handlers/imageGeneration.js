@@ -88,6 +88,9 @@ export async function handleImageGeneration(request) {
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit,
+      autoSwitch: false,
+      // ponytail: image streams commit on HTTP success; add image-event inspection before empty-stream fallback.
+      checkEmptyResponse: false,
     });
   }
 

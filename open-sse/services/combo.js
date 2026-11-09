@@ -344,6 +344,7 @@ export function isZeroContentResponse(data) {
  * @param {string} [options.comboStrategy] - Strategy: "fallback", "round-robin", or "smart"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @param {boolean} [options.autoSwitch=true] - Capability auto-switching
+ * @param {boolean} [options.checkEmptyResponse=true] - Check chat responses for empty completions
  * @param {string|null} [options.sessionId=null] - Client session identifier for prompt cache retention
  * @param {string} [options.smartPolicy="smart"] - Policy: "smart" (adaptive ≥80%), "strict" (lock 1st model), "per-turn", or "custom"
  * @param {boolean} [options.sessionSticky=true] - Keep chosen model across session requests to retain prompt cache
@@ -360,6 +361,7 @@ export async function handleComboChat({
   comboStrategy,
   comboStickyLimit = 1,
   autoSwitch = true,
+  checkEmptyResponse = true,
   sessionId = null,
   smartPolicy = "smart",
   sessionSticky = true,
@@ -480,6 +482,10 @@ export async function handleComboChat({
       // otherwise be delivered as a successful empty answer with no failover.
       // Peek the stream for real content before committing to this candidate.
       if (result.ok) {
+        if (!checkEmptyResponse) {
+          log.info("COMBO", `Model ${modelStr} succeeded`);
+          return result;
+        }
         let peeked = null;
         try {
           peeked = await peekComboResponse(result, log);

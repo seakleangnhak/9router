@@ -22,6 +22,9 @@ const getPageInfo = (pathname) => {
   const mediaDetailMatch = pathname.match(/\/media-providers\/([^/]+)\/([^/]+)$/);
   if (mediaDetailMatch) {
     const kindId = mediaDetailMatch[1];
+    if (kindId === "combo") {
+      return { title: "Media Combo", description: "", icon: "layers", breadcrumbs: [] };
+    }
     const providerId = mediaDetailMatch[2];
     const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kindId);
     const provider = AI_PROVIDERS[providerId];

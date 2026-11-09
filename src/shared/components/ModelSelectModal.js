@@ -503,11 +503,10 @@ export default function ModelSelectModal({
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
 
-  // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
+  // Media selectors choose models directly; only chat combos belong in the LLM picker.
   const filteredCombos = useMemo(() => {
     if (kindFilter || capFilter) return [];
-    if (parsedQuery.isEmpty) return combos;
-    return combos.filter(c => matchesSearch(c.name, parsedQuery));
+    return combos.filter(c => (!c.kind || c.kind === "llm") && (parsedQuery.isEmpty || matchesSearch(c.name, parsedQuery)));
   }, [combos, parsedQuery, kindFilter, capFilter]);
 
   // Sort models alphabetically, with added models floated to top

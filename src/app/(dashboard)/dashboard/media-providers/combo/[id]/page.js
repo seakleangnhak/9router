@@ -5,14 +5,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
-import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS, resolveProviderId } from "@/shared/constants/providers";
 
 // Parse "providerId/model" or just "providerId" → { providerId, model }
 function parseModelEntry(entry) {
   if (typeof entry !== "string") return { providerId: "", model: "" };
   const idx = entry.indexOf("/");
-  if (idx < 0) return { providerId: entry, model: "" };
-  return { providerId: entry.slice(0, idx), model: entry.slice(idx + 1) };
+  if (idx < 0) return { providerId: resolveProviderId(entry), model: "" };
+  return { providerId: resolveProviderId(entry.slice(0, idx)), model: entry.slice(idx + 1) };
 }
 
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -52,6 +52,7 @@ export default function ComboDetailPage() {
   const [name, setName] = useState("");
   const [nameError, setNameError] = useState("");
   const [providers, setProviders] = useState([]);
+  const [savingModels, setSavingModels] = useState(false);
   const [roundRobin, setRoundRobin] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -84,7 +85,7 @@ export default function ComboDetailPage() {
       setName(c.name);
       setProviders(c.models || []);
       const s = settingsRes.ok ? await settingsRes.json() : {};
-      setRoundRobin(s.comboStrategies?.[c.name]?.fallbackStrategy === "round-robin");
+      setRoundRobin((s.comboStrategies?.[c.name]?.fallbackStrategy || s.comboStrategy) === "round-robin");
       const allLogs = logsRes.ok ? await logsRes.json() : [];
       setLogs(allLogs.filter((l) => typeof l === "string" && l.includes(c.name)).slice(0, 50));
     } catch { /* noop */ }
@@ -122,22 +123,19 @@ export default function ComboDetailPage() {
     const value = model?.value || model;
     if (!value || providers.includes(value)) return;
     const next = [...providers, value];
-    setProviders(next);
-    await saveCombo({ models: next });
+    await saveModels(next);
   };
 
   const handleDeselectModel = async (model) => {
     const value = model?.value || model;
     if (!value || !providers.includes(value)) return;
     const next = providers.filter((p) => p !== value);
-    setProviders(next);
-    await saveCombo({ models: next });
+    await saveModels(next);
   };
 
   const handleRemoveProvider = async (idx) => {
     const next = providers.filter((_, i) => i !== idx);
-    setProviders(next);
-    await saveCombo({ models: next });
+    await saveModels(next);
   };
 
   const handleMove = async (idx, dir) => {
@@ -145,22 +143,34 @@ export default function ComboDetailPage() {
     const swap = idx + dir;
     if (swap < 0 || swap >= next.length) return;
     [next[idx], next[swap]] = [next[swap], next[idx]];
-    setProviders(next);
-    await saveCombo({ models: next });
+    await saveModels(next);
+  };
+
+  const saveModels = async (next) => {
+    if (savingModels) return;
+    setSavingModels(true);
+    try {
+      if (await saveCombo({ models: next })) setProviders(next);
+    } catch {
+      alert("Failed to save models");
+    } finally {
+      setSavingModels(false);
+    }
   };
 
   const handleToggleRoundRobin = async (enabled) => {
-    setRoundRobin(enabled);
     const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-    const s = settingsRes.ok ? await settingsRes.json() : {};
+    if (!settingsRes.ok) { alert("Failed to load combo strategy"); return; }
+    const s = await settingsRes.json();
     const updated = { ...(s.comboStrategies || {}) };
-    if (enabled) updated[combo.name] = { fallbackStrategy: "round-robin" };
-    else delete updated[combo.name];
-    await fetch("/api/settings", {
+    updated[combo.name] = { ...updated[combo.name], fallbackStrategy: enabled ? "round-robin" : "fallback" };
+    const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ comboStrategies: updated }),
     });
+    if (!res.ok) { alert("Failed to save combo strategy"); return; }
+    setRoundRobin(enabled);
   };
 
   const handleDelete = async () => {
@@ -211,8 +221,9 @@ export default function ComboDetailPage() {
       setTestResult({ json: JSON.stringify(maskB64(data), null, 2), imageUrl, latencyMs });
     } catch (e) {
       setTestError(e.message || "Network error");
+    } finally {
+      setTesting(false);
     }
-    setTesting(false);
   };
 
   // Mask large b64_json strings to keep JSON view readable
@@ -232,6 +243,7 @@ export default function ComboDetailPage() {
   if (!combo) return notFound();
 
   const kindLabel = KIND_LABELS[combo.kind] || MEDIA_PROVIDER_KINDS.find((k) => k.id === combo.kind)?.label || "Combo";
+  const isImage = combo.kind === "image";
   const examplePath = EXAMPLE_PATHS[combo.kind];
   const exampleBody = combo.kind && EXAMPLE_BODIES[combo.kind] ? EXAMPLE_BODIES[combo.kind](combo.name) : null;
   const curlExample = examplePath
@@ -244,7 +256,7 @@ export default function ComboDetailPage() {
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <Link href={backHref} className="text-text-muted hover:text-primary">
+          <Link href={backHref} aria-label={`Back to ${kindLabel}`} className="text-text-muted hover:text-primary">
             <span className="material-symbols-outlined">arrow_back</span>
           </Link>
           <div className="size-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -265,31 +277,26 @@ export default function ComboDetailPage() {
         <h2 className="text-lg font-semibold mb-3">Settings</h2>
         <div className="flex flex-col gap-4">
           <div>
-            <Input label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
+            <Input label="Combo Name" aria-label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
             <p className="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and .</p>
           </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Round Robin</p>
-              <p className="text-xs text-text-muted">Rotate providers across requests instead of strict fallback order.</p>
-            </div>
-            <Toggle checked={roundRobin} onChange={handleToggleRoundRobin} />
-          </div>
+          <Toggle checked={roundRobin} onChange={handleToggleRoundRobin} label="Round Robin" description={`Rotate ${isImage ? "models" : "providers"} across requests instead of strict fallback order.`} className="w-full flex-row-reverse justify-between" />
         </div>
       </Card>
 
       {/* Providers Card */}
       <Card>
+        <fieldset disabled={savingModels} className="min-w-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
           <div>
-            <h2 className="text-lg font-semibold">Providers</h2>
+            <h2 className="text-lg font-semibold">{isImage ? "Models" : "Providers"}</h2>
             <p className="text-xs text-text-muted">Tried in order (top-down) or rotated when round-robin is on.</p>
           </div>
-          <Button size="sm" icon="add" onClick={() => setShowPicker(true)}>Add Provider</Button>
+          <Button size="sm" icon="add" onClick={() => setShowPicker(true)}>{isImage ? "Add Model" : "Add Provider"}</Button>
         </div>
         {providers.length === 0 ? (
           <div className="text-center py-6 border border-dashed border-border rounded-lg text-text-muted text-sm">
-            No providers yet.
+            No {isImage ? "models" : "providers"} yet.
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -297,7 +304,7 @@ export default function ComboDetailPage() {
               const { providerId, model } = parseModelEntry(entry);
               const p = AI_PROVIDERS[providerId];
               return (
-                <div key={`${entry}-${idx}`} className="flex items-center gap-3 p-2 rounded-lg bg-black/[0.02] dark:bg-white/[0.02]">
+                <div key={`${entry}-${idx}`} className="grid grid-cols-[1.25rem_1.5rem_minmax(0,1fr)] sm:grid-cols-[1.25rem_1.5rem_minmax(0,1fr)_auto] items-center gap-3 p-2 rounded-lg bg-black/[0.02] dark:bg-white/[0.02]">
                   <span className="text-xs text-text-muted w-5 text-center">{idx + 1}</span>
                   <ProviderIcon
                     src={`/providers/${providerId}.png`}
@@ -311,7 +318,7 @@ export default function ComboDetailPage() {
                     <div className="text-sm font-medium truncate">{p?.name || providerId}</div>
                     {model && <code className="text-[10px] text-text-muted font-mono truncate block">{model}</code>}
                   </div>
-                  <div className="flex items-center gap-0.5">
+                  <div className="col-span-3 sm:col-span-1 flex items-center justify-end gap-0.5">
                     <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move up">
                       <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                     </button>
@@ -327,6 +334,7 @@ export default function ComboDetailPage() {
             })}
           </div>
         )}
+        </fieldset>
       </Card>
 
       {/* Test Example Card */}
@@ -394,11 +402,14 @@ export default function ComboDetailPage() {
       </Card>
 
       {showPicker && (
+        <fieldset disabled={savingModels}>
         <ModelSelectModal
           isOpen={showPicker}
           onClose={() => setShowPicker(false)}
           onSelect={handleAddModel}
           onDeselect={handleDeselectModel}
+          onSelectBatch={(models) => saveModels([...new Set([...providers, ...models.map((m) => m.value)])])}
+          onDeselectBatch={(models) => saveModels(providers.filter((p) => !models.some((m) => m.value === p)))}
           activeProviders={connections}
           modelAliases={modelAliases}
           title={`Add ${kindLabel} Model`}
@@ -406,6 +417,7 @@ export default function ComboDetailPage() {
           addedModelValues={providers}
           closeOnSelect={false}
         />
+        </fieldset>
       )}
     </div>
   );
