@@ -8,7 +8,7 @@ const network = vi.hoisted(() => ({
   Socket: vi.fn(function () { throw new Error("Direct socket forbidden in test"); }),
 }));
 
-vi.mock("undici", () => ({ Agent: network.Agent, ProxyAgent: network.ProxyAgent }));
+vi.mock("undici", () => ({ fetch: network.fetch, Agent: network.Agent, ProxyAgent: network.ProxyAgent }));
 vi.mock("dns", () => ({
   Resolver: class {
     setServers() {}
@@ -42,7 +42,8 @@ describe("proxy fetch preserves TLS verification", () => {
 
     await expect(proxyAwareFetch("https://api.example.com/v1/chat", { headers: { Authorization: "Bearer test-key" } })).rejects.toBe(error);
     expect(network.fetch).toHaveBeenCalledTimes(1);
-    expect(network.Agent).not.toHaveBeenCalled();
+    expect(network.Agent).toHaveBeenCalledOnce();
+    expect(network.Agent.mock.calls[0][0].connect.rejectUnauthorized).not.toBe(false);
   });
 
   it.each(["true", "1", "unexpected"])("keeps verification with STRICT_SSL=%s", async (value) => {
@@ -63,7 +64,10 @@ describe("proxy fetch preserves TLS verification", () => {
 
     await expect(proxyAwareFetch("https://api.example.com/v1/chat")).resolves.toBe(response);
     expect(network.fetch).toHaveBeenCalledTimes(2);
-    expect(network.Agent).toHaveBeenCalledWith({ connect: { rejectUnauthorized: false } });
+    expect(network.Agent.mock.calls[0][0].connect.rejectUnauthorized).not.toBe(false);
+    expect(network.Agent).toHaveBeenLastCalledWith(expect.objectContaining({
+      connect: expect.objectContaining({ rejectUnauthorized: false }),
+    }));
   });
 
   it("keeps an insecure opt-in retry on the configured strict proxy", async () => {
@@ -74,7 +78,11 @@ describe("proxy fetch preserves TLS verification", () => {
     const proxyUrl = "http://proxy.example.com:8080";
 
     await expect(proxyAwareFetch("https://api.example.com/v1/chat", {}, { enabled: true, url: proxyUrl, strictProxy: true })).resolves.toBe(response);
-    expect(network.ProxyAgent).toHaveBeenLastCalledWith({ uri: proxyUrl, requestTls: { rejectUnauthorized: false } });
+    expect(network.ProxyAgent.mock.calls[0][0].requestTls.rejectUnauthorized).not.toBe(false);
+    expect(network.ProxyAgent).toHaveBeenLastCalledWith(expect.objectContaining({
+      uri: proxyUrl,
+      requestTls: expect.objectContaining({ rejectUnauthorized: false }),
+    }));
     expect(network.Agent).not.toHaveBeenCalled();
   });
 
@@ -86,7 +94,8 @@ describe("proxy fetch preserves TLS verification", () => {
 
     await expect(proxyAwareFetch("https://api.example.com/v1/chat", { strictTls: true })).rejects.toBe(error);
     expect(network.fetch).toHaveBeenCalledOnce();
-    expect(network.Agent).not.toHaveBeenCalled();
+    expect(network.Agent).toHaveBeenCalledOnce();
+    expect(network.Agent.mock.calls[0][0].connect.rejectUnauthorized).not.toBe(false);
   });
 
   it("allows the direct transport adapter only after required proxy resolution", async () => {

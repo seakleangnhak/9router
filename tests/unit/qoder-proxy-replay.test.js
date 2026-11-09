@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const transport = vi.hoisted(() => ({ fetch: null }));
+vi.mock("undici", async () => ({
+  ...await vi.importActual("undici"),
+  fetch: (...args) => transport.fetch(...args),
+}));
+
 vi.mock("../../open-sse/services/qoderModels.js", () => ({
   getQoderModelConfig: vi.fn(async () => ({ key: "auto", max_output_tokens: 32 })),
   resolveQoderModels: vi.fn(),
@@ -29,8 +35,8 @@ async function loadExecutor(fetchMock, useProxy = true) {
     vi.stubEnv(key, "");
   }
   if (useProxy) vi.stubEnv("HTTPS_PROXY", "http://proxy.test:3128");
-  // Exercise the real proxyAwareFetch: it captures fetch when imported.
-  vi.stubGlobal("fetch", fetchMock);
+  // Exercise the real proxyAwareFetch with its package-local undici transport.
+  transport.fetch = fetchMock;
   const { QoderExecutor } = await import("../../open-sse/executors/qoder.js");
   return new QoderExecutor();
 }
@@ -58,11 +64,20 @@ describe("Qoder signed inference transport", () => {
     if (proxyOptions) expect(proxyOptions.strictProxy).toBe(false);
   });
 
-  it("generates a fresh COSY identity when the caller retries after transport failure", async () => {
+  it.each(["UND_ERR_SOCKET", "ECONNRESET"])("does not replay a signed direct POST after %s response loss", async (code) => {
+    const error = new TypeError("response lost after upstream accepted request", { cause: { code } });
+    const fetchMock = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(success());
+    const executor = await loadExecutor(fetchMock, false);
+
+    await expect(executor.execute(request)).rejects.toBe(error);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([true, false])("generates a fresh COSY identity when the caller retries with proxy=%s", async (useProxy) => {
     const fetchMock = vi.fn()
-      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockRejectedValueOnce(new TypeError("response lost", { cause: { code: "UND_ERR_SOCKET" } }))
       .mockResolvedValueOnce(success());
-    const executor = await loadExecutor(fetchMock);
+    const executor = await loadExecutor(fetchMock, useProxy);
     await expect(executor.execute(request)).rejects.toThrow("response lost");
     const result = await executor.execute(request);
     expect(result.response.ok).toBe(true);
@@ -81,7 +96,8 @@ describe("Qoder signed inference transport", () => {
     expect(result.response.ok).toBe(true);
     await result.response.text();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(!!fetchMock.mock.calls[0][1].dispatcher).toBe(useProxy);
+    const { Agent, ProxyAgent } = await import("undici");
+    expect(fetchMock.mock.calls[0][1].dispatcher).toBeInstanceOf(useProxy ? ProxyAgent : Agent);
   });
 
   it("preserves caller cancellation without replaying the request", async () => {

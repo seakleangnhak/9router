@@ -305,11 +305,12 @@ describe("dashboard guard local-only access", () => {
   });
 
   describe.each([
+    "/api/oauth/commandcode/auto-import",
     "/api/oauth/minimax-code/lease-connect",
     "/api/oauth/minimax-code/lease-status",
     "/api/oauth/minimax-code-global/lease-connect",
     "/api/oauth/minimax-code-global/lease-status",
-  ])("MiniMax desktop access: %s", (pathname) => {
+  ])("host credentials access: %s", (pathname) => {
     it.each([true, false])("rejects remote dashboard sessions when requireLogin=%s", async (requireLogin) => {
       mocks.getSettings.mockResolvedValue({ requireLogin });
       mocks.verifyDashboardAuthToken.mockResolvedValue(true);
