@@ -1,3 +1,8 @@
+# Local LangSearch provider (2026-11-10)
+
+- Add LangSearch API-key Web Search with snippets by default, optional webpage text, date/domain filters, token usage, and existing provider combos.
+- Keep LangSearch credentials on its fixed API endpoint and retain router API-key restrictions; describe shared token allowances without a fabricated monthly request quota.
+
 # Local image combos (2026-11-09)
 
 - Enable image model combos under Text to Image with ordered fallback, round-robin, and image test previews.

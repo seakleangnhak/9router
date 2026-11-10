@@ -570,6 +570,11 @@ export async function handleComboChat({
       } catch {
         // Ignore JSON parse errors
       }
+      if (!retryAfter) {
+        const header = result.headers.get("retry-after");
+        const reset = header == null ? NaN : /^\d+$/.test(header) ? Date.now() + Number(header) * 1000 : Date.parse(header);
+        if (Number.isFinite(reset) && reset > Date.now() && reset <= 8640000000000000) retryAfter = new Date(reset).toISOString();
+      }
 
       // Track earliest retryAfter across all combo models
       if (retryAfter && (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))) {

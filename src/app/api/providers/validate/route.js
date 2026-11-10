@@ -26,6 +26,20 @@ async function probeWebProvider(provider, apiKey) {
   const cfg = p.searchConfig || p.fetchConfig;
   if (!cfg) return null;
   if (cfg.authType === "none") return true; // no-auth (e.g. searxng)
+  if (provider === "langsearch") {
+    const res = await fetch(cfg.baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ query: "ping", count: 1 }),
+      redirect: "error",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status === 401 || res.status === 403) return false;
+    if (!res.ok) throw new Error(`LangSearch validation returned HTTP ${res.status}${res.status === 429 ? ": rate or daily token limit reached" : ""}`);
+    const data = await res.json();
+    if (Number(data.code) !== 200 || !Array.isArray(data.data?.webPages?.value)) throw new Error("Malformed LangSearch validation response");
+    return true;
+  }
 
   let url = cfg.validateUrl || cfg.baseUrl;
   const headers = { "Content-Type": "application/json" };

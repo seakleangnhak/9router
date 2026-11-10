@@ -43,9 +43,15 @@ export function GenericExampleCard({ providerId, kind }) {
   const safeExConfig = exConfig || {};
   const formats = kind === "webFetch" ? AI_PROVIDERS[providerId]?.fetchConfig?.formats : null;
   const hasFormats = Array.isArray(formats) && formats.length > 0;
-  const extraFields = (safeExConfig.extraFields || []).map((field) => (
+  const extraFields = (safeExConfig.extraFields || []).filter((field) => (
+    providerId !== "langsearch" || !["country", "language"].includes(field.key)
+  )).map((field) => (
     field.key === "format" && hasFormats
       ? { ...field, options: formats, default: formats.includes(field.default) ? field.default : formats[0] }
+      : providerId === "langsearch" && field.key === "search_type"
+        ? { ...field, options: AI_PROVIDERS[providerId].searchConfig.searchTypes }
+      : providerId === "langsearch" && field.key === "max_results"
+        ? { ...field, max: AI_PROVIDERS[providerId].searchConfig.maxMaxResults }
       : field
   ));
 

@@ -192,6 +192,49 @@ function buildTavilyRequest(config, params) {
   };
 }
 
+function buildLangSearchRequest(config, params) {
+  if (params.searchType && params.searchType !== "web") throw new Error("LangSearch supports web search only");
+  if (!Number.isInteger(params.maxResults) || params.maxResults < 1 || params.maxResults > config.maxMaxResults) {
+    throw new Error("LangSearch max_results must be an integer from 1 to 50");
+  }
+  if (params.offset != null && params.offset !== 0) throw new Error("LangSearch does not support offset");
+  if (params.country || params.language) throw new Error("LangSearch does not support country or language filters");
+  if (params.domainFilter != null && (!Array.isArray(params.domainFilter) || params.domainFilter.some((d) => typeof d !== "string" || !d.trim() || d === "-"))) {
+    throw new Error("LangSearch domain_filter must contain non-empty domain strings");
+  }
+  const ranges = { any: "noLimit", day: "oneDay", week: "oneWeek", month: "oneMonth", year: "oneYear" };
+  const freshness = params.providerOptions?.freshness ?? ranges[params.timeRange] ?? params.timeRange ?? "noLimit";
+  if (!Object.values(ranges).includes(freshness)) {
+    const dates = typeof freshness === "string" ? freshness.split("..") : [];
+    const validDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d)) && new Date(d).toISOString().slice(0, 10) === d;
+    if (dates.length < 1 || dates.length > 2 || !dates.every(validDate) || (dates.length === 2 && dates[0] > dates[1])) {
+      throw new Error("LangSearch freshness must be a supported time range, UTC date, or ordered date range");
+    }
+  }
+  const options = params.contentOptions;
+  if (options != null && (typeof options !== "object" || Array.isArray(options))) throw new Error("LangSearch content_options must be an object");
+  if (options?.full_page != null && typeof options.full_page !== "boolean") throw new Error("LangSearch full_page must be a boolean");
+  const maxCharacters = options?.max_characters;
+  if (maxCharacters != null && (!Number.isInteger(maxCharacters) || maxCharacters < 1 || maxCharacters > 2147483647)) {
+    throw new Error("LangSearch max_characters must be a positive 32-bit integer");
+  }
+  if (options?.full_page && options.format && options.format !== "text") throw new Error("LangSearch full-page content supports text only");
+  const { includes, excludes } = parseDomainFilter(params.domainFilter);
+  const body = { query: params.query, count: params.maxResults, freshness };
+  if (includes.length) body.includeDomains = includes;
+  if (excludes.length) body.excludeDomains = excludes;
+  if (options?.full_page) body.contents = { text: maxCharacters == null ? true : { maxCharacters } };
+  return {
+    // Stored credentials must never follow a client-supplied baseUrl.
+    url: config.baseUrl,
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.token}` },
+      body: JSON.stringify(body),
+    },
+  };
+}
+
 function buildGooglePseRequest(config, params) {
   const apiKey = params.token;
   const cx = getProviderSetting(params, "cx");
@@ -453,6 +496,7 @@ const BUILDERS = {
   "perplexity": buildPerplexityRequest,
   "exa": buildExaRequest,
   "tavily": buildTavilyRequest,
+  "langsearch": buildLangSearchRequest,
   "google-pse": buildGooglePseRequest,
   "linkup": buildLinkupRequest,
   "searchapi": buildSearchApiRequest,

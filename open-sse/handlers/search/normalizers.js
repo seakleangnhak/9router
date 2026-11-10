@@ -120,6 +120,28 @@ function normalizeTinyfish(data) {
   };
 }
 
+function normalizeLangSearch(data) {
+  const items = data?.data?.webPages?.value;
+  if (Number(data?.code) !== 200 || !Array.isArray(items)) throw new Error("Malformed LangSearch response");
+  const now = new Date().toISOString();
+  const results = items.map((item, idx) => {
+    if (!item || typeof item.url !== "string" || !/^https?:\/\//i.test(item.url)) throw new Error("Malformed LangSearch source URL");
+    return makeResult("langsearch", {
+      title: typeof item.name === "string" ? item.name : "",
+      url: item.url,
+      snippet: typeof item.snippet === "string" ? item.snippet : "",
+      full_text: typeof item.text === "string" ? item.text : null,
+      published_at: typeof item.datePublished === "string" ? item.datePublished : null,
+    }, idx, now);
+  });
+  const usage = {};
+  for (const key of ["input_tokens", "output_tokens"]) {
+    const value = data?.usage?.[key];
+    if (Number.isSafeInteger(value) && value >= 0) usage[key] = value;
+  }
+  return { results, totalResults: null, usage };
+}
+
 function normalizeGooglePse(data, _query, _searchType) {
   const now = new Date().toISOString();
   const items = Array.isArray(data.items) ? data.items : [];
@@ -301,6 +323,7 @@ const NORMALIZERS = {
   "perplexity": normalizePerplexity,
   "exa": normalizeExa,
   "tavily": normalizeTavily,
+  "langsearch": normalizeLangSearch,
   "google-pse": normalizeGooglePse,
   "linkup": normalizeLinkup,
   "searchapi": normalizeSearchApi,

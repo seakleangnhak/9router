@@ -36,20 +36,23 @@ function sanitizeHeaders(headers) {
 }
 
 /** Build a JSON Response wrapper used by the auth layer. */
-function jsonResponse(payload, status = 200) {
+function jsonResponse(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", ...headers }
   });
 }
 
 /** Wrap an error result with a Response object so the auth wrapper can return it directly. */
-function errorResult(status, error) {
+function errorResult(status, error, resetsAtMs = null) {
+  const retryAfter = resetsAtMs ? new Date(resetsAtMs).toISOString() : null;
   return {
     success: false,
     status,
     error,
-    response: jsonResponse({ error: { message: error, code: status } }, status)
+    ...(resetsAtMs ? { resetsAtMs } : {}),
+    response: jsonResponse({ error: { message: error, code: status }, ...(retryAfter ? { retryAfter } : {}) }, status,
+      retryAfter ? { "Retry-After": String(Math.max(0, Math.ceil((resetsAtMs - Date.now()) / 1000))) } : {})
   };
 }
 
@@ -73,7 +76,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   const params = {
     query: body.query,
     searchType: body.search_type || (providerConfig.searchTypes?.[0] || "web"),
-    maxResults: Math.min(body.max_results || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100),
+    maxResults: provider.id === "langsearch" ? (body.max_results ?? providerConfig.defaultMaxResults) : Math.min(body.max_results || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100),
     token,
     country: body.country,
     language: body.language,
@@ -101,12 +104,15 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   log?.info?.("SEARCH", `${provider.id} | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
 
   try {
-    const resp = await fetchPublic(url, { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal });
+    const resp = await fetchPublic(url, { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal }, provider.id === "langsearch" ? { maxRedirects: 0 } : undefined);
     clearTimeout(timer);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => "");
       log?.error?.("SEARCH", `${provider.id} ${resp.status}: ${errText.slice(0, 200)}`);
-      return { success: false, status: resp.status, error: `${provider.id} returned ${resp.status}: ${errText.slice(0, 200)}` };
+      const retryAfter = provider.id === "langsearch" && resp.status === 429 ? resp.headers.get("retry-after") : null;
+      const reset = retryAfter == null ? NaN : /^\d+$/.test(retryAfter) ? Date.now() + Number(retryAfter) * 1000 : Date.parse(retryAfter);
+      return { success: false, status: resp.status, error: `${provider.id} returned ${resp.status}: ${errText.slice(0, 200)}`,
+        ...(Number.isFinite(reset) && reset > Date.now() && reset <= 8640000000000000 ? { resetsAtMs: reset } : {}) };
     }
     const data = await resp.json();
     const normalized = normalizeSearchResponse(provider.id, data, params.query, params.searchType);
@@ -118,6 +124,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
     const usage = {
       queries_used: 1,
       search_cost_usd: providerConfig.costPerQuery ?? null,
+      ...normalized.usage,
     };
     if (Number.isFinite(providerConfig.creditsPerResult)) {
       usage.provider_credits_used = results.length * providerConfig.creditsPerResult;
@@ -209,5 +216,5 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
     if (fallback.success) return successResult(fallback.data);
   }
 
-  return errorResult(result.status || 502, result.error || "Search failed");
+  return errorResult(result.status || 502, result.error || "Search failed", result.resetsAtMs);
 }
