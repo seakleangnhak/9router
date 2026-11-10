@@ -67,15 +67,17 @@ RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     fi
 
-# Keep runtime npm; patch its remaining bundled dependencies separately.
+# ponytail: isolate patched dependency trees until npm bundles fixed releases.
 RUN npm install --global --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund npm@11.21.1 && \
-    npm install --prefix /tmp/npm-security-fix --no-save \
-      --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund ip-address@10.7.4 undici@6.29.1 && \
-    rm -rf /usr/local/lib/node_modules/npm/node_modules/ip-address \
-           /usr/local/lib/node_modules/npm/node_modules/undici && \
-    mv /tmp/npm-security-fix/node_modules/ip-address /usr/local/lib/node_modules/npm/node_modules/ip-address && \
-    mv /tmp/npm-security-fix/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici && \
-    rm -rf /tmp/npm-security-fix && \
+    npm install --prefix /opt/npm-security-fix --no-save \
+      --registry="${NPM_REGISTRY}" --ignore-scripts --no-audit --no-fund \
+      ip-address@10.7.4 undici@6.29.1 glob@14.0.4 minimatch@11.0.5 && \
+    for package in ip-address undici glob minimatch; do \
+      packageDir="/usr/local/lib/node_modules/npm/node_modules/$package"; \
+      rm -rf "$packageDir" && \
+      cp -R "/opt/npm-security-fix/node_modules/$package" "$packageDir" && \
+      ln -s /opt/npm-security-fix/node_modules "$packageDir/node_modules" || exit 1; \
+    done && \
     npm cache clean --force
 
 LABEL org.opencontainers.image.title="9router" \
@@ -108,7 +110,7 @@ RUN mkdir -p /app/data /app/data-home && chown node:node /app/data /app/data-hom
 
 # Avoid a full distribution upgrade in the runtime image. It makes builds less
 # reproducible and is unrelated to installing the runtime entrypoint helper.
-RUN apk add --no-cache su-exec ffmpeg && \
+RUN apk add --no-cache 'zlib>=1.4-r0' su-exec ffmpeg && \
   printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 

@@ -1,3 +1,8 @@
+# Local runtime security fixes (2026-11-10)
+
+- Patch npm's bundled glob and minimatch with isolated dependency trees, and require Alpine zlib 1.4-r0 or newer to address CVE-2026-118773, CVE-2026-118764, and CVE-2026-4738.
+- Check patched package versions and offline npm packaging/install behavior on both native image architectures before publishing final tags.
+
 # Local LangSearch provider (2026-11-10)
 
 - Add LangSearch API-key Web Search with snippets by default, optional webpage text, date/domain filters, token usage, and existing provider combos.

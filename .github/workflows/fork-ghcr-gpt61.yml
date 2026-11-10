@@ -57,6 +57,20 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Verify runtime security fixes
+        run: |
+          timeout --kill-after=5s 90s docker run --rm \
+            --network none --read-only --user node \
+            --cpus 1 --memory 512m --pids-limit 64 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --ulimit cpu=45 --ulimit fsize=67108864 \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/verify-runtime-security.mjs,target=/verify-runtime-security.mjs,readonly" \
+            --entrypoint /usr/bin/env \
+            "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-${{ matrix.arch }}" \
+            -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp TMPDIR=/tmp \
+            node /verify-runtime-security.mjs
+
   publish:
     needs: build-and-push
     runs-on: ubuntu-latest
