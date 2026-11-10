@@ -1,6 +1,7 @@
 name: Build GPT-6.1 Sol Image
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - codex/gpt-6-1-sol-ghcr
