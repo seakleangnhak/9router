@@ -45,14 +45,18 @@ function jsonResponse(payload, status = 200, headers = {}) {
 
 /** Wrap an error result with a Response object so the auth wrapper can return it directly. */
 function errorResult(status, error, resetsAtMs = null) {
-  const retryAfter = resetsAtMs ? new Date(resetsAtMs).toISOString() : null;
+  const payload = { error: { message: error, code: status } };
+  const headers = {};
+  if (resetsAtMs) {
+    payload.retryAfter = new Date(resetsAtMs).toISOString();
+    headers["Retry-After"] = String(Math.max(0, Math.ceil((resetsAtMs - Date.now()) / 1000)));
+  }
   return {
     success: false,
     status,
     error,
     ...(resetsAtMs ? { resetsAtMs } : {}),
-    response: jsonResponse({ error: { message: error, code: status }, ...(retryAfter ? { retryAfter } : {}) }, status,
-      retryAfter ? { "Retry-After": String(Math.max(0, Math.ceil((resetsAtMs - Date.now()) / 1000))) } : {})
+    response: jsonResponse(payload, status, headers)
   };
 }
 
@@ -76,7 +80,9 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   const params = {
     query: body.query,
     searchType: body.search_type || (providerConfig.searchTypes?.[0] || "web"),
-    maxResults: provider.id === "langsearch" ? (body.max_results ?? providerConfig.defaultMaxResults) : Math.min(body.max_results || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100),
+    maxResults: provider.id === "langsearch"
+      ? (body.max_results ?? providerConfig.defaultMaxResults)
+      : Math.min(body.max_results || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100),
     token,
     country: body.country,
     language: body.language,
@@ -104,7 +110,11 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   log?.info?.("SEARCH", `${provider.id} | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
 
   try {
-    const resp = await fetchPublic(url, { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal }, provider.id === "langsearch" ? { maxRedirects: 0 } : undefined);
+    const resp = await fetchPublic(
+      url,
+      { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal },
+      provider.id === "langsearch" ? { maxRedirects: 0 } : undefined
+    );
     clearTimeout(timer);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => "");

@@ -45,15 +45,18 @@ export function GenericExampleCard({ providerId, kind }) {
   const hasFormats = Array.isArray(formats) && formats.length > 0;
   const extraFields = (safeExConfig.extraFields || []).filter((field) => (
     providerId !== "langsearch" || !["country", "language"].includes(field.key)
-  )).map((field) => (
-    field.key === "format" && hasFormats
-      ? { ...field, options: formats, default: formats.includes(field.default) ? field.default : formats[0] }
-      : providerId === "langsearch" && field.key === "search_type"
-        ? { ...field, options: AI_PROVIDERS[providerId].searchConfig.searchTypes }
-      : providerId === "langsearch" && field.key === "max_results"
-        ? { ...field, max: AI_PROVIDERS[providerId].searchConfig.maxMaxResults }
-      : field
-  ));
+  )).map((field) => {
+    if (field.key === "format" && hasFormats) {
+      return { ...field, options: formats, default: formats.includes(field.default) ? field.default : formats[0] };
+    }
+    if (providerId === "langsearch" && field.key === "search_type") {
+      return { ...field, options: AI_PROVIDERS[providerId].searchConfig.searchTypes };
+    }
+    if (providerId === "langsearch" && field.key === "max_results") {
+      return { ...field, max: AI_PROVIDERS[providerId].searchConfig.maxMaxResults };
+    }
+    return field;
+  });
 
   // Get models for this kind (e.g., type="image")
   const kindModels = getModelsByProviderId(providerId).filter((m) => getModelKind(m) === kind);
