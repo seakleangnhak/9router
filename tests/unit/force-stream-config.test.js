@@ -42,7 +42,8 @@ vi.mock("../../open-sse/services/tokenRefresh.js", () => ({
   refreshWithRetry: vi.fn(),
 }));
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+vi.mock("../../open-sse/utils/proxyFetch.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   default: vi.fn(),
   proxyAwareFetch: vi.fn(),
 }));

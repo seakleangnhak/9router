@@ -1,3 +1,4 @@
+import { getKeyProxyContext } from "../services/keyProxy.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -77,6 +78,9 @@ export async function handleSearch(request) {
   // restricted key needs the provider id (or the combo) on its list.
   const keyAccessDenied = await enforceKeyAccessProvider(await getKeyAccessContext(request), providerInput, comboModels);
   if (keyAccessDenied) return keyAccessDenied;
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -85,7 +89,7 @@ export async function handleSearch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings, requestProxyOptions),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -93,10 +97,10 @@ export async function handleSearch(request) {
     });
   }
 
-  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings);
+  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings, requestProxyOptions);
 }
 
-async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, requestProxyOptions) {
   const query = body.query;
   const providerId = resolveProviderId(providerInput);
   const resolvedProvider = AI_PROVIDERS[providerId];
@@ -142,7 +146,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
       body: coreBody,
       provider: resolvedProvider,
       providerConfig,
-      credentials: null,
+      credentials: requestProxyOptions ? { requestProxyOptions } : null,
       log
     });
     if (result.success) return result.response;
@@ -170,12 +174,12 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
     // Provider that actually owns the connection in use — differs from
     // providerId once we fall back, and error locks must be attributed to it.
     let credentialProviderId = providerId;
-    let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey);
+    let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey, { requestProxyOptions });
 
     // Fall back to the related chat provider's credentials when this search
     // provider has none of its own (one key, chat + search).
     if (!credentials && fallbackProviderId) {
-      credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey);
+      credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey, { requestProxyOptions });
       if (credentials) {
         credentialProviderId = fallbackProviderId;
         log.info("AUTH", `\x1b[32m${providerId} reusing ${fallbackProviderId} credentials\x1b[0m`);
@@ -221,6 +225,8 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
     });
 
     if (result.success) return result.response;
+
+    if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
 
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, credentialProviderId, searchLockKey, result.resetsAtMs);
 

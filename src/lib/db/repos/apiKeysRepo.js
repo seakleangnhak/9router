@@ -15,6 +15,7 @@ function rowToKey(row) {
     isActive: row.isActive === 1 || row.isActive === true,
     allowFastMode: fastMode !== "off",
     fastMode,
+    proxyPoolId: row.proxyPoolId ?? null,
     createdAt: row.createdAt,
     access: keyAccessFromColumns(row.accessRestricted, row.accessAllow),
   };
@@ -40,7 +41,7 @@ export async function getApiKeyByKey(key) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId, allowFastMode = false, fastMode) {
+export async function createApiKey(name, machineId, allowFastMode = false, fastMode, proxyPoolId = null) {
   if (!machineId) throw new Error("machineId is required");
   fastMode = resolveFastMode({ fastMode, allowFastMode });
   const db = await getAdapter();
@@ -54,13 +55,14 @@ export async function createApiKey(name, machineId, allowFastMode = false, fastM
     isActive: true,
     allowFastMode: fastMode !== "off",
     fastMode,
+    proxyPoolId,
     createdAt: new Date().toISOString(),
     access: { restricted: false, allow: [] },
   };
   const cols = keyAccessToColumns(KEY_ACCESS_UNRESTRICTED);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, allowFastMode, fastMode, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.allowFastMode ? 1 : 0, fastMode, apiKey.createdAt, cols.accessRestricted, cols.accessAllow]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, allowFastMode, fastMode, proxyPoolId, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.allowFastMode ? 1 : 0, fastMode, proxyPoolId, apiKey.createdAt, cols.accessRestricted, cols.accessAllow]
   );
   return apiKey;
 }
@@ -76,8 +78,8 @@ export async function updateApiKey(id, data) {
     merged.allowFastMode = merged.fastMode !== "off";
     const cols = keyAccessToColumns(merged.access);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowFastMode = ?, fastMode = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.allowFastMode ? 1 : 0, merged.fastMode, cols.accessRestricted, cols.accessAllow, id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowFastMode = ?, fastMode = ?, proxyPoolId = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.allowFastMode ? 1 : 0, merged.fastMode, merged.proxyPoolId, cols.accessRestricted, cols.accessAllow, id]
     );
     result = rowToKey(db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]));
   });

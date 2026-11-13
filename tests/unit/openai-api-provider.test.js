@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { upstreamFetch } = vi.hoisted(() => ({ upstreamFetch: vi.fn() }));
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: upstreamFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", async (importOriginal) => ({
+  ...(await importOriginal()), proxyAwareFetch: upstreamFetch }));
 vi.mock("@/lib/usageDb.js", () => ({
   trackPendingRequest: vi.fn(),
   appendRequestLog: vi.fn(async () => {}),

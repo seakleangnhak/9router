@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // Xiaomi MiMo TTS — via OpenAI-compatible chat completions (non-streaming).
 // Docs: https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5
 // Message contract: target text in `role: assistant` content, style/voice
@@ -11,11 +12,11 @@ const DEFAULT_VOICE = "mimo_default";
 export default {
   synthesize(text, model, credentials, responseFormat, { style, language } = {}) {
     if (!credentials?.apiKey) throw new Error("xiaomi-mimo API key required");
-    return synthesizeMiMo(text, model, credentials.apiKey, style, language);
+    return synthesizeMiMo(text, model, credentials.apiKey, style, language, getCredentialFetch(credentials));
   },
 };
 
-export async function synthesizeMiMo(text, model, apiKey, style, language) {
+export async function synthesizeMiMo(text, model, apiKey, style, language, fetch = globalThis.fetch) {
   const { modelId, voiceId } = parseModelVoice(model, DEFAULT_MODEL, DEFAULT_VOICE, [DEFAULT_MODEL]);
 
   // Language and style are soft instructions → prepend as a role:user message.

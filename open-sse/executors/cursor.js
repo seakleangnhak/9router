@@ -641,9 +641,9 @@ export class CursorExecutor extends BaseExecutor {
     // strict proxy configuration must fail closed here rather than leak the
     // real IP on a direct socket (see proxyIntentFailed above).
     if (proxyIntentFailed(proxyOptions)) {
-      throw new Error(
+      throw Object.assign(new Error(
         "Cursor AgentService requires a strict proxy that this HTTP/2 transport cannot honor; refusing to open a direct connection"
-      );
+      ), { keyProxyError: proxyOptions?.keyProxy === true });
     }
 
     const url = `${agentEndpoint}${AGENT_RUN_PATH}`;
@@ -1014,6 +1014,7 @@ export class CursorExecutor extends BaseExecutor {
       try {
         return await this.executeAgent({ model, body, stream, credentials, signal, log, proxyOptions });
       } catch (error) {
+        if (error.keyProxyError) throw error;
         return {
           response: new Response(JSON.stringify({
             error: { message: error.message, type: "connection_error", code: "" },
@@ -1056,6 +1057,7 @@ export class CursorExecutor extends BaseExecutor {
 
       return { response: transformedResponse, url, headers, transformedBody: body };
     } catch (error) {
+      if (error.keyProxyError) throw error;
       const errorResponse = new Response(JSON.stringify({
         error: {
           message: error.message,

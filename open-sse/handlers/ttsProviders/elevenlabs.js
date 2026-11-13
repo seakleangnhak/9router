@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // ElevenLabs TTS — voice id with optional model_id prefix
 import { Buffer } from "node:buffer";
 
@@ -23,6 +24,7 @@ export async function fetchElevenLabsVoices(apiKey) {
 
 export default {
   async synthesize(text, model, credentials) {
+    const fetch = getCredentialFetch(credentials);
     if (!credentials?.apiKey) throw new Error("ElevenLabs API key required");
     let modelId = "eleven_flash_v2_5";
     let voiceId = model;

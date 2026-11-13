@@ -3,6 +3,7 @@ import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.j
 import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
+import { getCredentialFetch } from "../utils/proxyFetch.js";
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -19,6 +20,7 @@ export async function handleEmbeddingsCore({
   onRequestSuccess,
 }) {
   const { provider, model } = modelInfo;
+  const fetch = getCredentialFetch(credentials);
 
   // Validate input
   const input = body.input;
@@ -72,7 +74,7 @@ export async function handleEmbeddingsCore({
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("EMBEDDINGS", `Fetch error: ${errMsg}`);
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+    return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg), keyProxyError: error.keyProxyError === true };
   }
 
   // Handle 401/403 — try token refresh (skip for noAuth providers)
@@ -101,7 +103,8 @@ export async function handleEmbeddingsCore({
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
         });
-      } catch {
+      } catch (error) {
+        if (error.keyProxyError) return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message), keyProxyError: true };
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }
     } else {

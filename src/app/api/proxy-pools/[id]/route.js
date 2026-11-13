@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   deleteProxyPool,
+  getApiKeys,
   getProviderConnections,
   getProxyPoolById,
   updateProxyPool,
@@ -101,14 +102,16 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
     }
 
-    const connections = await getProviderConnections();
+    const [connections, keys] = await Promise.all([getProviderConnections(), getApiKeys()]);
     const boundConnectionCount = countBoundConnections(connections, id);
+    const boundKeyCount = keys.filter((key) => key.proxyPoolId === id).length;
 
-    if (boundConnectionCount > 0) {
+    if (boundConnectionCount > 0 || boundKeyCount > 0) {
       return NextResponse.json(
         {
           error: "Proxy pool is currently in use",
           boundConnectionCount,
+          boundKeyCount,
         },
         { status: 409 }
       );

@@ -26,7 +26,7 @@ export default {
     }
     return { promptText: body.prompt, model, ratio, ...(body.image ? { referenceImages: [{ uri: body.image }] } : {}) };
   },
-  async parseResponse(response, { headers }) {
+  async parseResponse(response, { headers, fetch = globalThis.fetch }) {
     const { id } = await response.json();
     if (!id) throw new Error("Runway: no task id returned");
     const taskUrl = `${BASE_URL}/tasks/${id}`;

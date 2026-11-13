@@ -86,6 +86,7 @@ export const TABLES = {
       isActive: "INTEGER DEFAULT 1",
       allowFastMode: "INTEGER NOT NULL DEFAULT 0",
       fastMode: "TEXT",
+      proxyPoolId: "TEXT",
       createdAt: "TEXT NOT NULL",
       // Per-key access control. Additive columns, picked up by
       // syncSchemaFromTables() on boot; existing rows read as unrestricted (0).

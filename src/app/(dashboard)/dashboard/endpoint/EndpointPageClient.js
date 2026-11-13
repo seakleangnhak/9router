@@ -25,10 +25,18 @@ export default function APIPageClient({ machineId }) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyProxyPoolId, setNewKeyProxyPoolId] = useState(null);
+  const [creatingKey, setCreatingKey] = useState(false);
+  const [createKeyError, setCreateKeyError] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [fastModeSaving, setFastModeSaving] = useState(null);
   const [fastModeError, setFastModeError] = useState("");
+  const [proxyPools, setProxyPools] = useState([]);
+  const [proxyPoolsLoading, setProxyPoolsLoading] = useState(true);
+  const [proxyPoolsError, setProxyPoolsError] = useState("");
+  const [proxySaving, setProxySaving] = useState(null);
+  const [proxyErrors, setProxyErrors] = useState({});
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -105,6 +113,7 @@ export default function APIPageClient({ machineId }) {
   useEffect(() => {
     fetchData();
     loadSettings();
+    loadProxyPools();
   }, []);
 
   // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
@@ -275,6 +284,21 @@ export default function APIPageClient({ machineId }) {
       console.log("Error fetching data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadProxyPools = async () => {
+    setProxyPoolsLoading(true);
+    setProxyPoolsError("");
+    try {
+      const res = await fetch("/api/proxy-pools");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load proxy pools");
+      setProxyPools((data.proxyPools || []).map(({ id, name, isActive }) => ({ id, name, isActive })));
+    } catch (error) {
+      setProxyPoolsError(error.message);
+    } finally {
+      setProxyPoolsLoading(false);
     }
   };
 
@@ -618,25 +642,33 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleCreateKey = async () => {
-    if (!newKeyName.trim()) return;
+  const closeAddModal = () => {
+    setShowAddModal(false);
+    setNewKeyName("");
+    setNewKeyProxyPoolId(null);
+    setCreateKeyError("");
+  };
 
+  const handleCreateKey = async () => {
+    if (!newKeyName.trim() || creatingKey) return;
+
+    setCreatingKey(true);
+    setCreateKeyError("");
     try {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName, proxyPoolId: newKeyProxyPoolId }),
       });
       const data = await res.json();
-
-      if (res.ok) {
-        setCreatedKey(data.key);
-        await fetchData();
-        setNewKeyName("");
-        setShowAddModal(false);
-      }
+      if (!res.ok) throw new Error(data.error || "Failed to create API key");
+      setCreatedKey(data.key);
+      await fetchData();
+      closeAddModal();
     } catch (error) {
-      console.log("Error creating key:", error);
+      setCreateKeyError(error.message);
+    } finally {
+      setCreatingKey(false);
     }
   };
 
@@ -697,6 +729,25 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const handleKeyProxyChange = async (id, proxyPoolId) => {
+    setProxySaving(id);
+    setProxyErrors(prev => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proxyPoolId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update key proxy");
+      setKeys(prev => prev.map(key => key.id === id ? { ...key, proxyPoolId: data.key.proxyPoolId } : key));
+    } catch (error) {
+      setProxyErrors(prev => ({ ...prev, [id]: error.message }));
+    } finally {
+      setProxySaving(null);
+    }
+  };
+
   // Save a key's access (restricted flag + allow list).
   const handleUpdateKeyAccess = async (id, access) => {
     try {
@@ -749,6 +800,52 @@ export default function APIPageClient({ machineId }) {
   }
 
   const currentEndpoint = baseUrl;
+  const keyProxyGuidance = "Key proxies override inference routing and block requests if the proxy fails. Token refresh and background tasks keep existing routing. Use the same stable proxy for each Codex/OpenAI account.";
+
+  const renderProxySelect = (id, value, onChange, disabled = false) => {
+    const assignedPool = proxyPools.find(pool => pool.id === value);
+    const unavailable = value && !assignedPool?.isActive;
+    const poolsLoaded = !proxyPoolsLoading && !proxyPoolsError;
+    return (
+      <div className="flex flex-col gap-1.5 max-w-sm">
+        <label htmlFor={id} className="text-sm font-medium text-text-main">Proxy pool</label>
+        <select
+          id={id}
+          value={value ?? ""}
+          onChange={event => onChange(event.target.value || null)}
+          disabled={disabled || proxyPoolsLoading || !!proxyPoolsError}
+          aria-describedby={unavailable && poolsLoaded ? `${id}-hint` : undefined}
+          className="w-full py-2.5 px-3 text-base sm:text-sm text-text-main bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <option value="">Inherit account/global proxy</option>
+          {unavailable && (
+            <option value={value} disabled>
+              {assignedPool ? `${assignedPool.name} (inactive)` : `Assigned pool (${poolsLoaded ? "unavailable" : "not loaded"})`}
+            </option>
+          )}
+          {proxyPools.filter(pool => pool.isActive).map(pool => (
+            <option key={pool.id} value={pool.id}>{pool.name}</option>
+          ))}
+        </select>
+        {unavailable && poolsLoaded && (
+          <p id={`${id}-hint`} className="text-xs text-orange-500">
+            Assigned pool is unavailable. Requests stay blocked until the pool is restored or changed.
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  const renderProxyPoolsStatus = () => proxyPoolsLoading ? (
+    <p role="status" className="text-sm text-text-muted">Loading proxy pools…</p>
+  ) : proxyPoolsError ? (
+    <div role="alert" className="text-sm text-red-500 flex flex-wrap items-center gap-2">
+      {proxyPoolsError}
+      <Button variant="ghost" size="sm" onClick={loadProxyPools}>Retry</Button>
+    </div>
+  ) : !proxyPools.some(pool => pool.isActive) ? (
+    <p className="text-sm text-text-muted">No active proxy pools. Inherited routing is still available.</p>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -1033,6 +1130,14 @@ export default function APIPageClient({ machineId }) {
         </p>
         {fastModeError && <p role="alert" className="text-sm text-red-500 mb-4">{fastModeError}</p>}
 
+        <div className="text-sm text-text-muted space-y-2 mb-4">
+          <p>
+            {keyProxyGuidance}
+            {" "}<a href="/dashboard/proxy-pools" className="text-primary underline">Manage proxy pools</a>
+          </p>
+          {renderProxyPoolsStatus()}
+        </div>
+
         {keys.length === 0 ? (
           <div className="text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
@@ -1083,6 +1188,11 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  <div className="mt-3" aria-busy={proxySaving === key.id}>
+                    {renderProxySelect(`key-proxy-${key.id}`, key.proxyPoolId, value => handleKeyProxyChange(key.id, value), proxySaving !== null)}
+                    {proxySaving === key.id && <p role="status" className="text-xs text-text-muted mt-1">Saving proxy…</p>}
+                    {proxyErrors[key.id] && <p role="alert" className="text-sm text-red-500 mt-1">{proxyErrors[key.id]}</p>}
+                  </div>
                   <KeyAccessControls
                     apiKey={key}
                     onChange={(access) => handleUpdateKeyAccess(key.id, access)}
@@ -1145,10 +1255,7 @@ export default function APIPageClient({ machineId }) {
       <Modal
         isOpen={showAddModal}
         title="Create API Key"
-        onClose={() => {
-          setShowAddModal(false);
-          setNewKeyName("");
-        }}
+        onClose={() => { if (!creatingKey) closeAddModal(); }}
       >
         <div className="flex flex-col gap-4">
           <Input
@@ -1156,18 +1263,23 @@ export default function APIPageClient({ machineId }) {
             value={newKeyName}
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
+            disabled={creatingKey}
           />
+          {renderProxySelect("new-key-proxy", newKeyProxyPoolId, setNewKeyProxyPoolId, creatingKey)}
+          <p className="text-sm text-text-muted">
+            {keyProxyGuidance}
+          </p>
+          {renderProxyPoolsStatus()}
+          {createKeyError && <p role="alert" className="text-sm text-red-500">{createKeyError}</p>}
           <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
-              Create
+            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()} loading={creatingKey}>
+              {creatingKey ? "Creating…" : "Create"}
             </Button>
             <Button
-              onClick={() => {
-                setShowAddModal(false);
-                setNewKeyName("");
-              }}
+              onClick={closeAddModal}
               variant="ghost"
               fullWidth
+              disabled={creatingKey}
             >
               Cancel
             </Button>

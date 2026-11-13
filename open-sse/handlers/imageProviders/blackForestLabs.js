@@ -21,7 +21,7 @@ export default {
     if (body.image) req.image_prompt = body.image;
     return req;
   },
-  async parseResponse(response, { headers }) {
+  async parseResponse(response, { headers, fetch = globalThis.fetch }) {
     const data = await response.json();
     const pollingUrl = data.polling_url;
     if (!pollingUrl) throw new Error("BFL: no polling_url returned");

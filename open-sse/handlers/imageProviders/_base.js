@@ -19,7 +19,7 @@ export function sizeToAspectRatio(size) {
 }
 
 // Fetch URL → base64 (for providers returning image URLs)
-export async function urlToBase64(url) {
+export async function urlToBase64(url, fetch = globalThis.fetch) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   const buf = await res.arrayBuffer();

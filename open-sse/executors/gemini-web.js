@@ -397,6 +397,8 @@ function errorResponse(status, error, extraHeaders = {}) {
 // ─── Executor ───────────────────────────────────────────────────────────────
 
 export class GeminiWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("gemini-web", { id: "gemini-web", baseUrl: GEMINI_URL });
   }

@@ -408,6 +408,8 @@ async function downloadMedia(page, att, kind) {
 // ─── Executor ───────────────────────────────────────────────────────────────
 
 export class MuseWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("muse-web", { id: "muse-web", baseUrl: "https://muse.ai" });
   }

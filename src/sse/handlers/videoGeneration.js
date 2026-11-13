@@ -1,3 +1,4 @@
+import { getKeyProxyContext } from "../services/keyProxy.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -126,6 +127,9 @@ export async function handleVideoCreate(request, action) {
     await getKeyAccessContext(request), bodyInfo.parsed?.model ? String(bodyInfo.parsed.model) : "", provider, model
   );
   if (keyAccessDenied) return keyAccessDenied;
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
 
   // Strip the provider prefix (e.g. "xai/grok-imagine-video") before forwarding;
   // otherwise forward the original bytes untouched.
@@ -145,7 +149,7 @@ export async function handleVideoCreate(request, action) {
       rawBody: forwardBody,
       contentType: bodyInfo.contentType || null,
       idempotencyKey: null,
-      credentials: null,
+      credentials: requestProxyOptions ? { requestProxyOptions } : null,
       signal: request.signal,
       log,
     });
@@ -158,7 +162,7 @@ export async function handleVideoCreate(request, action) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId, requestProxyOptions });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -202,6 +206,8 @@ export async function handleVideoCreate(request, action) {
     }
 
     // Record the failure (dashboard shows lastError/errorCode → user sees re-auth is needed)
+    if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
+
     const { shouldFallback } = await markAccountUnavailable(
       credentials.connectionId, result.status, sanitizeSecrets(result.error, refreshedCredentials), provider, model
     );
@@ -227,11 +233,14 @@ export async function handleVideoGet(request, requestId) {
   if (authError) return authError;
 
   if (!requestId) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing video request id");
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
 
   const preferredConnectionId = request.headers.get("x-connection-id") || null;
   const provider = await resolveGetProvider(request, preferredConnectionId);
 
-  const credentials = await getProviderCredentials(provider, null, null, { preferredConnectionId });
+  const credentials = await getProviderCredentials(provider, null, null, { preferredConnectionId, requestProxyOptions });
   if (!credentials || credentials.allRateLimited) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
   }
@@ -258,6 +267,8 @@ export async function handleVideoGet(request, requestId) {
     await clearAccountError(credentials.connectionId, credentials, null);
     return withConnectionHeader(result.response, credentials.connectionId);
   }
+
+  if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
 
   await markAccountUnavailable(
     credentials.connectionId, result.status, sanitizeSecrets(result.error, refreshedCredentials), provider, null

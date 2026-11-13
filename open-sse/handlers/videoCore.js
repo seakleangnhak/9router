@@ -3,6 +3,7 @@ import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { refreshTokenByProvider } from "../services/tokenRefresh.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
 import { getVideoAdapter } from "./videoProviders/index.js";
+import { getCredentialFetch } from "../utils/proxyFetch.js";
 
 // Upstream fetch deadline for video job submission/polling (the job itself is
 // async upstream — this only bounds the HTTP round-trip, not video rendering).
@@ -45,6 +46,9 @@ async function executeExecutorDrivenVideo({ provider, rawBody, credentials, sign
   const executor = getExecutor(provider);
   if (!executor?.generateMedia) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, `[${provider}] has no executor video support`);
+  }
+  if (credentials?.requestProxyOptions && executor.supportsRequestProxy === false) {
+    return { ...createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support API key proxies`), keyProxyError: true };
   }
 
   try {
@@ -183,6 +187,7 @@ export async function handleVideoProxyCore({
   }
 
   const adapter = getVideoAdapter(provider);
+  const fetch = getCredentialFetch(credentials);
   const fetchSignal = combineSignals(signal, timeoutMs);
 
   // Default (xAI shape) request plan; adapters override URL/method/headers/body.
@@ -230,7 +235,7 @@ export async function handleVideoProxyCore({
       return createErrorResult(HTTP_STATUS.REQUEST_TIMEOUT, `[${provider}] video ${method} aborted: ${error.message}`);
     }
     // Never re-send a creation POST on network error — the job may already exist upstream.
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video upstream fetch failed: ${error.message}`, credentials));
+    return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video upstream fetch failed: ${error.message}`, credentials)), keyProxyError: error.keyProxyError === true };
   }
 
   // 401/403 → refresh once → retry once (OAuth accounts only; API keys can't refresh)
@@ -256,7 +261,7 @@ export async function handleVideoProxyCore({
         if (retry.planError) return createErrorResult(HTTP_STATUS.BAD_REQUEST, `[${provider}] ${retry.planError}`);
         upstream = retry.response;
       } catch (error) {
-        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video retry after refresh failed: ${error.message}`, credentials));
+        return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, sanitizeSecrets(`[${provider}] video retry after refresh failed: ${error.message}`, credentials)), keyProxyError: error.keyProxyError === true };
       }
     } else {
       log?.warn?.("TOKEN", `${provider.toUpperCase()} | video refresh failed — account needs re-auth`);

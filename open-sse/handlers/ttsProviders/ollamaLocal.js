@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 import { resolveOllamaLocalHost } from "../../config/providers.js";
 import { responseToBase64, throwUpstreamError } from "./_base.js";
 
@@ -7,6 +8,7 @@ const KNOWN_PHONON_VOICES = new Set(["default", "zoey", "easton", "freya"]);
 
 export default {
   async synthesize(text, model, credentials, responseFormat = "mp3") {
+    const fetch = getCredentialFetch(credentials);
     const rawHost = resolveOllamaLocalHost(credentials);
     const host = String(rawHost)
       .replace(/\/+$/, "")

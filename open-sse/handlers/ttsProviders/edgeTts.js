@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // Microsoft Edge / Bing TTS (no auth) — via Bing translator endpoint
 import { Buffer } from "node:buffer";
 import { UA } from "./_base.js";
@@ -9,9 +10,9 @@ const cache = { token: null, tokenTime: 0 };
 let _voicesCache = null;
 let _voicesCacheTime = 0;
 
-async function getToken() {
+async function getToken(fetch, useCache = true) {
   const now = Date.now();
-  if (cache.token && now - cache.tokenTime < REFRESH_MS) return cache.token;
+  if (useCache && cache.token && now - cache.tokenTime < REFRESH_MS) return cache.token;
   const res = await fetch("https://www.bing.com/translator", {
     headers: { "User-Agent": UA, "Accept-Language": "vi,en-US;q=0.9,en;q=0.8" },
   });
@@ -21,12 +22,12 @@ async function getToken() {
   const html = await res.text();
   const match = html.match(/params_AbusePreventionHelper\s*=\s*\[([^,]+),([^,]+),/);
   if (!match) throw new Error("Failed to parse Bing token");
-  cache.token = { key: match[1], token: match[2].replace(/"/g, ""), cookie };
-  cache.tokenTime = now;
-  return cache.token;
+  const token = { key: match[1], token: match[2].replace(/"/g, ""), cookie };
+  if (useCache) { cache.token = token; cache.tokenTime = now; }
+  return token;
 }
 
-async function ttsRequest(text, voiceId, token) {
+async function ttsRequest(text, voiceId, token, fetch) {
   const parts = voiceId.split("-");
   const xmlLang = parts.slice(0, 2).join("-");
   const gender = voiceId.toLowerCase().includes("male") ? "Male" : "Female";
@@ -65,17 +66,18 @@ export async function fetchEdgeTtsVoices() {
 
 export default {
   noAuth: true,
-  async synthesize(text, model) {
+  async synthesize(text, model, credentials) {
+    const fetch = getCredentialFetch(credentials);
+    const useCache = !credentials?.requestProxyOptions;
     const voiceId = model || "vi-VN-HoaiMyNeural";
-    let token = await getToken();
-    let res = await ttsRequest(text, voiceId, token);
+    let token = await getToken(fetch, useCache);
+    let res = await ttsRequest(text, voiceId, token, fetch);
 
     // 429/403: invalidate cache and retry once
     if (res.status === 429 || res.status === 403) {
-      cache.token = null;
-      cache.tokenTime = 0;
-      token = await getToken();
-      res = await ttsRequest(text, voiceId, token);
+      if (useCache) { cache.token = null; cache.tokenTime = 0; }
+      token = await getToken(fetch, useCache);
+      res = await ttsRequest(text, voiceId, token, fetch);
     }
 
     if (!res.ok) {

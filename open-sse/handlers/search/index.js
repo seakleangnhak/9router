@@ -11,6 +11,7 @@ import { buildSearchRequest } from "./callers.js";
 import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
 import { fetchPublic } from "../../../src/shared/utils/ssrfGuard.js";
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 
 const GLOBAL_TIMEOUT_MS = 15000;
 const NON_RETRIABLE = new Set([400, 401, 403, 404]);
@@ -113,7 +114,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
     const resp = await fetchPublic(
       url,
       { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal },
-      provider.id === "langsearch" ? { maxRedirects: 0 } : undefined
+      { fetchImpl: getCredentialFetch(credentials), ...(provider.id === "langsearch" ? { maxRedirects: 0 } : {}) }
     );
     clearTimeout(timer);
     if (!resp.ok) {
@@ -158,7 +159,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
     const isTimeout = err.name === "AbortError";
     const status = isTimeout ? 504 : 502;
     log?.error?.("SEARCH", `${provider.id} ${isTimeout ? "timeout" : "error"}: ${err.message}`);
-    return { success: false, status, error: `${provider.id} ${isTimeout ? "timeout" : "error"}: ${err.message}` };
+    return { success: false, status, error: `${provider.id} ${isTimeout ? "timeout" : "error"}: ${err.message}`, keyProxyError: err.keyProxyError === true };
   }
 }
 
@@ -206,6 +207,7 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
   }
 
   if (result.success) return successResult(result.data);
+  if (result.keyProxyError) return { ...errorResult(result.status || 502, result.error), keyProxyError: true };
 
   // 3. Failover within global timeout for retriable errors
   if (
@@ -224,6 +226,7 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
       log
     });
     if (fallback.success) return successResult(fallback.data);
+    if (fallback.keyProxyError) return { ...errorResult(fallback.status || 502, fallback.error), keyProxyError: true };
   }
 
   return errorResult(result.status || 502, result.error || "Search failed", result.resetsAtMs);

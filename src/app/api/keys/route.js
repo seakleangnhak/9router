@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { FAST_MODES } from "@/lib/db/helpers/apiKeyFastMode.js";
+import { validateApiKeyProxyPool } from "@/lib/db/helpers/apiKeyProxyPool.js";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, allowFastMode, fastMode } = body;
+    const { name, allowFastMode, fastMode, proxyPoolId } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -31,10 +32,12 @@ export async function POST(request) {
     if (fastMode !== undefined && !FAST_MODES.includes(fastMode)) {
       return NextResponse.json({ error: "fastMode must be off, on, or force" }, { status: 400 });
     }
+    const proxyError = await validateApiKeyProxyPool(proxyPoolId);
+    if (proxyError) return NextResponse.json({ error: proxyError }, { status: 400 });
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId, allowFastMode, fastMode);
+    const apiKey = await createApiKey(name, machineId, allowFastMode, fastMode, proxyPoolId);
 
     return NextResponse.json({
       key: apiKey.key,
@@ -43,6 +46,7 @@ export async function POST(request) {
       machineId: apiKey.machineId,
       allowFastMode: apiKey.allowFastMode,
       fastMode: apiKey.fastMode,
+      proxyPoolId: apiKey.proxyPoolId,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

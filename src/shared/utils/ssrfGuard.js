@@ -199,11 +199,11 @@ export async function assertPublicUrlResolved(rawUrl) {
 // validated public URL can't 30x its way to an internal target. Bounded to
 // maxRedirects hops (fetch's own default following behavior has no bound
 // relevant here since we never let it auto-follow).
-export async function fetchPublic(url, init = {}, { maxRedirects = 5 } = {}) {
+export async function fetchPublic(url, init = {}, { maxRedirects = 5, fetchImpl = globalThis.fetch } = {}) {
   await assertPublicUrlResolved(url);
   let currentUrl = url;
   for (let hop = 0; ; hop++) {
-    const res = await fetch(currentUrl, { ...init, redirect: "manual" });
+    const res = await fetchImpl(currentUrl, { ...init, redirect: "manual" });
     const isRedirect = res.status >= 300 && res.status < 400;
     const location = isRedirect ? res.headers.get("location") : null;
     if (!location) return res;

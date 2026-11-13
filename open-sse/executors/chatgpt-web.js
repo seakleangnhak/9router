@@ -64,6 +64,8 @@ function errorResponse(status, message) {
 }
 
 export class ChatGptWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("chatgpt-web", { id: "chatgpt-web", baseUrl: CHATGPT_WEB_URL });
   }

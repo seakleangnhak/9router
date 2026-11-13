@@ -17,7 +17,7 @@ export default {
     if (body.image) req.image_url = body.image;
     return req;
   },
-  async parseResponse(response, { headers }) {
+  async parseResponse(response, { headers, fetch = globalThis.fetch }) {
     const { status_url, response_url } = await response.json();
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {

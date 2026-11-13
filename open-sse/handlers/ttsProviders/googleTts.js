@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // Google Translate TTS (no auth) — scrape token + batchexecute RPC
 import { UA } from "./_base.js";
 
@@ -5,25 +6,27 @@ const REFRESH_MS = 11 * 60 * 1000;
 const cache = { token: null, tokenTime: 0 };
 let _idx = 0;
 
-async function getToken() {
+async function getToken(fetch, useCache = true) {
   const now = Date.now();
-  if (cache.token && now - cache.tokenTime < REFRESH_MS) return cache.token;
+  if (useCache && cache.token && now - cache.tokenTime < REFRESH_MS) return cache.token;
   const res = await fetch("https://translate.google.com/", { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`Google translate fetch failed: ${res.status}`);
   const html = await res.text();
   const fSid = html.match(/"FdrFJe":"(.*?)"/)?.[1];
   const bl = html.match(/"cfb2h":"(.*?)"/)?.[1];
   if (!fSid || !bl) throw new Error("Failed to parse Google token");
-  cache.token = { "f.sid": fSid, bl };
-  cache.tokenTime = now;
-  return cache.token;
+  const token = { "f.sid": fSid, bl };
+  if (useCache) { cache.token = token; cache.tokenTime = now; }
+  return token;
 }
 
 export default {
   noAuth: true,
-  async synthesize(text, model) {
+  async synthesize(text, model, credentials) {
+    const fetch = getCredentialFetch(credentials);
+    const useCache = !credentials?.requestProxyOptions;
     const lang = model || "en";
-    const token = await getToken();
+    const token = await getToken(fetch, useCache);
     const cleanText = text.replace(/[@^*()\\/\-_+=><"'\u201c\u201d\u3010\u3011]/g, " ").replaceAll(", ", ". ");
     const rpcId = "jQ1olc";
     const reqId = (++_idx * 100000) + Math.floor(1000 + Math.random() * 9000);

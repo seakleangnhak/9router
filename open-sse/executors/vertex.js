@@ -161,6 +161,9 @@ export class VertexExecutor extends BaseExecutor {
 
     // vertex-partner with raw key: auto-resolve project_id if not provided
     if (this.provider === "vertex-partner" && !saJson && !adcJson && !credentials?.providerSpecificData?.projectId) {
+      if (credentials?.requestProxyOptions) {
+        throw Object.assign(new Error("Set Vertex project_id before using an API key proxy"), { keyProxyError: true });
+      }
       const projectId = await resolveProjectId(credentials.apiKey);
       if (!projectId) throw new Error("Vertex: could not resolve project_id from API key. Please add it manually in provider settings.");
       log?.debug?.("VERTEX", `Resolved project_id: ${projectId}`);

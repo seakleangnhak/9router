@@ -143,9 +143,12 @@ function importLegacyMain(adapter, data) {
 
   importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
     const fastMode = resolveFastMode(k);
+    if (k.proxyPoolId != null && (typeof k.proxyPoolId !== "string" || !k.proxyPoolId.trim())) {
+      throw new Error("proxyPoolId must be a non-empty string or null");
+    }
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, allowFastMode, fastMode, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, fastMode !== "off" ? 1 : 0, fastMode, k.createdAt || new Date().toISOString()]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, allowFastMode, fastMode, proxyPoolId, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, fastMode !== "off" ? 1 : 0, fastMode, k.proxyPoolId ?? null, k.createdAt || new Date().toISOString()]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 

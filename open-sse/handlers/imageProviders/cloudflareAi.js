@@ -35,7 +35,7 @@ function getDimensions(body) {
   };
 }
 
-async function resolveImageInput(value) {
+async function resolveImageInput(value, { rejectRemoteFetch = false } = {}) {
   if (Array.isArray(value)) {
     return { bytes: value, b64: Buffer.from(value).toString("base64") };
   }
@@ -43,6 +43,7 @@ async function resolveImageInput(value) {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (/^https?:\/\//i.test(trimmed)) {
+    if (rejectRemoteFetch) throw new Error("Remote image downloads do not support API key proxies; send base64 images");
     const b64 = await urlToBase64(trimmed);
     return { bytes: base64ToBytes(b64), b64 };
   }
@@ -67,20 +68,20 @@ function addOptionalFields(target, body, append) {
   }
 }
 
-async function buildJsonBody(body) {
+async function buildJsonBody(body, options) {
   const req = { prompt: body.prompt, ...getDimensions(body) };
 
   addOptionalFields(req, body, (target, key, value) => {
     target[key] = value;
   });
 
-  const imageData = await resolveImageInput(body.image);
+  const imageData = await resolveImageInput(body.image, options);
   if (imageData) {
     req.image_b64 = imageData.b64;
     req.image = imageData.bytes;
   }
 
-  const maskData = await resolveImageInput(body.mask_image || body.maskImage || body.mask);
+  const maskData = await resolveImageInput(body.mask_image || body.maskImage || body.mask, options);
   if (maskData) {
     req.mask_b64 = maskData.b64;
     req.mask = maskData.bytes;
@@ -155,10 +156,10 @@ export default {
     return headers;
   },
 
-  buildBody: async (model, body) => (
+  buildBody: async (model, body, options) => (
     MULTIPART_MODELS.has(model)
       ? buildMultipartBody(body)
-      : await buildJsonBody(body)
+      : await buildJsonBody(body, options)
   ),
 
   async parseResponse(response) {

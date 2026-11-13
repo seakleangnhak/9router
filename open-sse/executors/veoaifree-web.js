@@ -156,6 +156,8 @@ async function downloadArtifactWithRetry(context, artifactUrl) {
 }
 
 export class VeoAiFreeWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("veoaifree-web", { id: "veoaifree-web", baseUrl: BASE_URL });
   }

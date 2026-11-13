@@ -30,6 +30,7 @@ export async function resolveSmartChoice({
   body,
   models,
   routerModel = DEFAULT_SYSTEMONE_ROUTER_MODEL,
+  requestProxyOptions,
   log,
   timeoutMs = DEFAULT_SYSTEMONE_TIMEOUT_MS,
 }) {
@@ -56,7 +57,7 @@ export async function resolveSmartChoice({
     }
 
     const { provider, model } = modelInfo;
-    const credentials = await getProviderCredentials(provider, new Set(), model);
+    const credentials = await getProviderCredentials(provider, new Set(), model, { requestProxyOptions });
     if (!credentials || credentials.allRateLimited) {
       log?.warn?.("COMBO", `smart-router: no credentials available for router provider "${provider}"`);
       return null;

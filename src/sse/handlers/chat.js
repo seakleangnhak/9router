@@ -1,3 +1,4 @@
+import { getKeyProxyContext } from "../services/keyProxy.js";
 import "open-sse/index.js";
 
 import {
@@ -103,6 +104,9 @@ export async function handleChat(request, clientRawRequest = null) {
   const keyAccess = await getKeyAccessContext(request);
   const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
   if (keyAccessDenied) return keyAccessDenied;
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
@@ -166,6 +170,7 @@ export async function handleChat(request, clientRawRequest = null) {
             body: b,
             models: m,
             routerModel: comboCfg.routerModel,
+            requestProxyOptions,
             log,
           })
         : null,
@@ -198,6 +203,9 @@ export async function handleChat(request, clientRawRequest = null) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, maxReasoningEffort = null, requestedModel = null) {
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -265,6 +273,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               body: b,
               models: m,
               routerModel: comboCfg.routerModel,
+              requestProxyOptions,
               log,
             })
           : null,
@@ -288,7 +297,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, requestProxyOptions });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -381,6 +390,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       );
       if (quotaResetMs) resetsAtMs = quotaResetMs;
     }
+
+    if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.

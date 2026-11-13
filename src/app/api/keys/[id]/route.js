@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { FAST_MODES } from "@/lib/db/helpers/apiKeyFastMode.js";
 import { validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
+import { validateApiKeyProxyPool } from "@/lib/db/helpers/apiKeyProxyPool.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -23,7 +24,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, allowFastMode, fastMode, access } = body;
+    const { isActive, allowFastMode, fastMode, access, proxyPoolId } = body;
     for (const [field, value] of Object.entries({ isActive, allowFastMode })) {
       if (value !== undefined && typeof value !== "boolean") {
         return NextResponse.json({ error: `${field} must be a boolean` }, { status: 400 });
@@ -37,11 +38,14 @@ export async function PUT(request, { params }) {
     if (!existing) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
+    const proxyError = await validateApiKeyProxyPool(proxyPoolId);
+    if (proxyError) return NextResponse.json({ error: proxyError }, { status: 400 });
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
     if (allowFastMode !== undefined) updateData.allowFastMode = allowFastMode;
     if (fastMode !== undefined) updateData.fastMode = fastMode;
+    if (proxyPoolId !== undefined) updateData.proxyPoolId = proxyPoolId;
     if (access !== undefined) {
       const checked = validateKeyAccessInput(access);
       if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });

@@ -52,7 +52,7 @@ describe("apiKeys access columns: upgrade from the previous schema", () => {
     const { db, adapter } = await boot();
 
     const cols = adapter.all(`PRAGMA table_info(apiKeys)`).map((c) => c.name);
-    expect(cols).toEqual(expect.arrayContaining(["accessRestricted", "accessAllow"]));
+    expect(cols).toEqual(expect.arrayContaining(["accessRestricted", "accessAllow", "proxyPoolId"]));
 
     const keys = await db.getApiKeys();
     expect(keys.map((k) => [k.id, k.name, k.isActive, k.access])).toEqual([
@@ -61,6 +61,7 @@ describe("apiKeys access columns: upgrade from the previous schema", () => {
     ]);
     expect(await db.validateApiKey("sk-legacy-one")).toBe(true);
     expect((await db.getApiKeyByKey("sk-legacy-one")).access.restricted).toBe(false);
+    expect(keys.every((key) => key.proxyPoolId === null)).toBe(true);
 
     // The schema bump took the pre-change safety backup.
     const backups = fs.readdirSync(path.join(tempDir, "db", "backups"));
@@ -80,6 +81,7 @@ describe("apiKeys access columns: upgrade from the previous schema", () => {
     const created = await db.createApiKey("fresh", "machine-1");
     expect(created.access).toEqual({ restricted: false, allow: [] });
     expect((await db.getApiKeyById(created.id)).access).toEqual({ restricted: false, allow: [] });
+    expect(created.proxyPoolId).toBeNull();
   });
 
   it("upgrades local schema v4 without losing Fast modes or combo reasoning limits", async () => {

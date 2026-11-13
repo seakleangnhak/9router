@@ -3,6 +3,7 @@ import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.j
 import { PROVIDER_MEDIA } from "../providers/index.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { generateSessionId } from "../executors/opencode-zen.js";
+import { getCredentialFetch } from "../utils/proxyFetch.js";
 
 const OPENCODE_PROVIDERS = new Set(["opencode", "opencode-zen"]);
 
@@ -38,6 +39,7 @@ export async function handleSystemoneCore({
   onRequestSuccess,
 }) {
   const { provider, model } = modelInfo;
+  const fetch = getCredentialFetch(credentials);
   const cfg = PROVIDER_MEDIA[provider]?.systemoneConfig;
   let targetUrl = buildSystemoneUrl(credentials?.providerSpecificData?.baseUrl, cfg);
   if (!targetUrl) {
@@ -96,7 +98,7 @@ export async function handleSystemoneCore({
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("SYSTEMONE", `Fetch error: ${errMsg}`);
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+    return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg), keyProxyError: error.keyProxyError === true };
   }
 
   if (!providerResponse.ok) {

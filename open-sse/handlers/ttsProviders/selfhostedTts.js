@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // Self-hosted OpenAI-compatible TTS — POST {baseUrl}/v1/audio/speech.
 //
 // A SPECIAL_ADAPTER rather than a genericFormats handler on purpose: the generic
@@ -12,6 +13,7 @@ const DEFAULT_VOICE = "af_heart";
 
 export default {
   async synthesize(text, model, credentials, responseFormat = "mp3") {
+    const fetch = getCredentialFetch(credentials);
     // Accept either providerSpecificData.baseUrl (how the custom embedding and
     // STT providers carry it) or a bare credentials.baseUrl (how the OpenAI TTS
     // adapter does), so a connection configured either way works.

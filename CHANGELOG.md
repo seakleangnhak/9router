@@ -1,3 +1,9 @@
+# Local API key proxies (2026-11-13)
+
+- Assign saved HTTP/HTTPS proxy pools to individual 9Router keys; reject invalid assignments and retain account/global routing for unassigned keys.
+- Keep routing isolated across concurrent keys, retries, and combos. Block unusable proxies and unsupported transports instead of sending directly.
+- Keep OAuth refresh and background work on existing routing; preserve key assignments in backups and prevent deleting bound pools.
+
 # Local integration (2026-11-13)
 
 - Merge official 9Router v0.5.119 while preserving Codex credit/reset safeguards, Headroom, LangSearch, image combos, and API-key access controls.

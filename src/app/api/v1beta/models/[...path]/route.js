@@ -1,3 +1,5 @@
+import { getKeyProxyContext } from "@/sse/services/keyProxy.js";
+import { proxyAwareFetch, getCredentialProxyOptions } from "open-sse/utils/proxyFetch.js";
 import { handleChat } from "@/sse/handlers/chat.js";
 import {
   clearAccountError,
@@ -249,13 +251,16 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
   // so restricted keys are checked here, before any credential lookup.
   const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), model, "gemini", modelId);
   if (keyAccessDenied) return keyAccessDenied;
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
   const excludeConnectionIds = new Set();
   const bodyText = JSON.stringify(body);
   let lastError = null;
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials("gemini", excludeConnectionIds, modelId);
+    const credentials = await getProviderCredentials("gemini", excludeConnectionIds, modelId, { requestProxyOptions });
     if (!credentials || credentials.allRateLimited) {
       console.log(`[GEMINI_NATIVE] exhausted model=${modelId} status=${lastStatus || Number(credentials?.lastErrorCode) || 503} error=${lastError || credentials?.lastError || "No active credentials for provider: gemini"}`);
       return Response.json(
@@ -293,7 +298,7 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
 
     let upstreamResponse;
     try {
-      upstreamResponse = await fetch(upstreamUrl, {
+      upstreamResponse = await proxyAwareFetch(upstreamUrl, {
         method: "POST",
         headers: {
           "Content-Type": request.headers.get("Content-Type") || "application/json",
@@ -301,7 +306,7 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
         },
         body: bodyText,
         signal: attemptController.signal,
-      });
+      }, getCredentialProxyOptions(credentials));
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       if (request.signal?.aborted && !timedOut) {
@@ -312,6 +317,8 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
       const status = isGeminiNativeTimeoutError(error, timedOut) ? 504 : 502;
       const errorText = getSafeGeminiNativeErrorText(error);
       console.log(`[GEMINI_NATIVE] fetch failed model=${modelId} status=${status} ms=${durationMs} conn=${safeConnection} error=${errorText}`);
+
+      if (error.keyProxyError) return Response.json({ error: { message: "API key proxy request failed" } }, { status: 502 });
 
       const { shouldFallback } = await markAccountUnavailable(
         credentials.connectionId,

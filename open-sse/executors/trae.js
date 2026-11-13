@@ -42,6 +42,8 @@ function flattenQuery(messages) {
 }
 
 export default class TraeExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("trae", PROVIDERS.trae);
   }

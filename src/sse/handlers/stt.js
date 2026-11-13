@@ -1,3 +1,4 @@
+import { getKeyProxyContext } from "../services/keyProxy.js";
 import {
   extractApiKey, isValidApiKey,
   getProviderCredentials, markAccountUnavailable, clearAccountError,
@@ -68,6 +69,9 @@ export async function handleStt(request) {
   // Per-key access control: checked before any credential lookup.
   const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), modelStr, provider, model);
   if (keyAccessDenied) return keyAccessDenied;
+  const keyProxy = await getKeyProxyContext(request);
+  if (keyProxy.error) return keyProxy.error;
+  const { requestProxyOptions } = keyProxy;
 
   log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
 
@@ -75,7 +79,7 @@ export async function handleStt(request) {
 
   // noAuth providers
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, transport: modelTransport });
+    const result = await handleSttCore({ provider, model, formData, credentials: requestProxyOptions ? { requestProxyOptions } : null, sttConfig: AI_PROVIDERS[provider]?.sttConfig, transport: modelTransport });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
   }
@@ -86,7 +90,7 @@ export async function handleStt(request) {
   let lastStatus = null;
 
   while (true) {
-    let credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    let credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestProxyOptions });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -104,9 +108,9 @@ export async function handleStt(request) {
     try {
       const isCodex = provider === "codex";
       if (isCodex) credentials = await checkAndRefreshToken(provider, credentials);
-      const proxyOptions = isCodex
+      const proxyOptions = requestProxyOptions || (isCodex
         ? await resolveConnectionProxyConfig(credentials._connection?.providerSpecificData || credentials.providerSpecificData)
-        : undefined;
+        : undefined);
       const args = { provider, model, formData, credentials, sttConfig: AI_PROVIDERS[provider]?.sttConfig, transport: modelTransport, signal: request.signal, proxyOptions };
       result = await handleSttCore(args);
       if (isCodex && result.status === 401 && credentials.refreshToken && !request.signal.aborted) {
@@ -127,6 +131,8 @@ export async function handleStt(request) {
     if (provider === "codex" && [400, 413, 504].includes(result.status)) {
       return result.response || errorResponse(result.status, result.error);
     }
+
+    if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
 
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
     if (shouldFallback) {

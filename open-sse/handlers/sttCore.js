@@ -4,6 +4,7 @@ import { transcribeGeminiLive } from "./geminiLiveStt.js";
 import { transcribeCodex } from "./codexStt.js";
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { getCredentialFetch, getCredentialProxyOptions } from "../utils/proxyFetch.js";
 
 // Next.js polyfills globalThis.FormData with a Web API implementation that lacks
 // internal undici symbols. When passed to fetch(), undici cannot serialize it as
@@ -50,7 +51,7 @@ async function upstreamError(res) {
 }
 
 // Deepgram: raw binary POST + model query param
-async function transcribeDeepgram(cfg, file, model, token, formData) {
+async function transcribeDeepgram(cfg, file, model, token, formData, fetch) {
   const url = new URL(cfg.baseUrl);
   url.searchParams.set("model", model);
   url.searchParams.set("smart_format", "true");
@@ -72,7 +73,7 @@ async function transcribeDeepgram(cfg, file, model, token, formData) {
 }
 
 // AssemblyAI: upload → submit → poll (max 120s)
-async function transcribeAssemblyAI(cfg, file, model, token) {
+async function transcribeAssemblyAI(cfg, file, model, token, fetch) {
   const auth = buildAuthHeaders(cfg, token);
   const buf = await file.arrayBuffer();
   const up = await fetch("https://api.assemblyai.com/v2/upload", {
@@ -102,7 +103,7 @@ async function transcribeAssemblyAI(cfg, file, model, token) {
 }
 
 // Nvidia NIM: multipart, normalize response
-async function transcribeNvidia(cfg, file, model, token) {
+async function transcribeNvidia(cfg, file, model, token, fetch) {
   const fd = new FormData();
   fd.append("file", file, file.name || "audio.wav");
   fd.append("model", model);
@@ -113,7 +114,7 @@ async function transcribeNvidia(cfg, file, model, token) {
 }
 
 // Gemini: generateContent with inline_data audio + transcription prompt
-async function transcribeGemini(cfg, file, model, token, formData) {
+async function transcribeGemini(cfg, file, model, token, formData, fetch) {
   const buf = await file.arrayBuffer();
   const b64 = Buffer.from(buf).toString("base64");
   const mime = resolveAudioContentType(file);
@@ -141,7 +142,7 @@ async function transcribeGemini(cfg, file, model, token, formData) {
 // ElevenLabs Scribe: multipart POST /v1/speech-to-text (xi-api-key).
 // Optional renderings (srt/vtt/seg_json) come back as `additional_formats`; the
 // requested one is served verbatim instead of being fabricated from the JSON body.
-async function transcribeElevenLabs(cfg, file, model, token, formData) {
+async function transcribeElevenLabs(cfg, file, model, token, formData, fetch) {
   const fd = new FormData();
   fd.append("file", file, file.name || "audio.wav");
   fd.append("model_id", model);
@@ -225,7 +226,7 @@ function textResponse(body) {
 }
 
 // HuggingFace: POST raw binary to {baseUrl}/{model_id}
-async function transcribeHuggingFace(cfg, file, model, token) {
+async function transcribeHuggingFace(cfg, file, model, token, fetch) {
   if (model.includes("..") || model.includes("//")) return createErrorResult(400, "Invalid model ID");
   const url = `${cfg.baseUrl.replace(/\/+$/, "")}/${model}`;
   const buf = await file.arrayBuffer();
@@ -240,7 +241,7 @@ async function transcribeHuggingFace(cfg, file, model, token) {
 }
 
 // Default: OpenAI/Groq/Whisper-compatible multipart
-async function transcribeOpenAICompatible(cfg, file, model, token, formData) {
+async function transcribeOpenAICompatible(cfg, file, model, token, formData, fetch) {
   const fd = new FormData();
   fd.append("file", file, file.name || "audio.wav");
   fd.append("model", model);
@@ -293,7 +294,7 @@ export async function handleSttCore({ provider, model, formData, credentials, st
 
   // OAuth transcription uses a fixed ChatGPT endpoint; never honor connection URL overrides.
   if (provider === "codex" && cfg.format === "codex-transcribe") {
-    return transcribeCodex({ formData, credentials, signal, proxyOptions });
+    return transcribeCodex({ formData, credentials, signal, proxyOptions: credentials?.requestProxyOptions || proxyOptions || getCredentialProxyOptions(credentials) });
   }
 
   // Per-connection endpoint override. Registry entries carry a fixed baseUrl,
@@ -313,9 +314,11 @@ export async function handleSttCore({ provider, model, formData, credentials, st
   // marker; with neither, the provider-default sttConfig.format applies.
   const marker = (typeof transport === "string" && transport.trim()) ? transport.trim() : resolveModelTransport(provider, model);
 
+  const fetch = getCredentialFetch(credentials);
   try {
     switch (marker || cfg.format) {
       case "gemini-live": {
+        if (credentials?.requestProxyOptions) return { ...createErrorResult(HTTP_STATUS.BAD_REQUEST, "Gemini Live does not support API key proxies"), keyProxyError: true };
         const live = await transcribeGeminiLive({ cfg, file, model, token, formData, mimeType: resolveAudioContentType(file) });
         // response_format parity with the OpenAI-compatible transport: default
         // envelope stays {text}; verbose_json adds segments mapped from the
@@ -332,15 +335,15 @@ export async function handleSttCore({ provider, model, formData, credentials, st
         }
         return jsonResponse({ text: live.text });
       }
-      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData);
-      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token);
-      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token);
-      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token);
-      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData);
-      case "elevenlabs-stt":  return await transcribeElevenLabs(cfg, file, model, token, formData);
-      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData);
+      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData, fetch);
+      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token, fetch);
+      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token, fetch);
+      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token, fetch);
+      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData, fetch);
+      case "elevenlabs-stt":  return await transcribeElevenLabs(cfg, file, model, token, formData, fetch);
+      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData, fetch);
     }
   } catch (err) {
-    return createErrorResult(err.status || HTTP_STATUS.BAD_GATEWAY, err.message || "STT request failed");
+    return { ...createErrorResult(err.status || HTTP_STATUS.BAD_GATEWAY, err.message || "STT request failed"), keyProxyError: err.keyProxyError === true };
   }
 }

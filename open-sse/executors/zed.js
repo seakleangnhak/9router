@@ -219,6 +219,8 @@ function wrapZedCompletionStream(response, provider, model) {
 }
 
 class ZedExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("zed");
   }

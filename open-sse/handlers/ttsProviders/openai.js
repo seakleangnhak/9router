@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // OpenAI TTS — model format: "tts-model/voice"
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
@@ -6,6 +7,7 @@ const DEFAULT_TTS_MODEL = PROVIDER_MEDIA["openai"]?.ttsConfig?.defaultModel;
 
 export default {
   async synthesize(text, model, credentials) {
+    const fetch = getCredentialFetch(credentials);
     if (!credentials?.apiKey) throw new Error("No OpenAI API key configured");
 
     let ttsModel = DEFAULT_TTS_MODEL;

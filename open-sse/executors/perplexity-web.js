@@ -389,6 +389,8 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, histo
 }
 
 export class PerplexityWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("perplexity-web", PROVIDERS["perplexity-web"]);
   }

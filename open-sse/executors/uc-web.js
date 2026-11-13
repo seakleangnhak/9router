@@ -318,6 +318,8 @@ export async function resolveImageBytes(ref, signal, log) {
 }
 
 export class UcWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("uc-web", { id: "uc-web", baseUrl: "https://internal.chatuncensored.ai" });
   }

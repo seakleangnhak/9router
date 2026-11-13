@@ -56,6 +56,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
       return {
+        requestProxyOptions: options.requestProxyOptions,
         id: "noauth",
         connectionName: "Public",
         isActive: true,
@@ -202,6 +203,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
     return {
+      requestProxyOptions: options.requestProxyOptions,
       authType: connection.authType,
       apiKey: connection.apiKey,
       accessToken: connection.accessToken,

@@ -1,3 +1,4 @@
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 // Gemini TTS — generateContent with AUDIO modality returns PCM L16, wrap as WAV
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "../../providers/index.js";
@@ -60,6 +61,7 @@ function buildPrompt(text, language) {
 
 export default {
   async synthesize(text, model, credentials, _responseFormat, opts = {}) {
+    const fetch = getCredentialFetch(credentials);
     if (!credentials?.apiKey) throw new Error("No Gemini API key configured");
     const { modelId, voiceId } = parseGeminiModelVoice(model);
     const url = `${TTS_BASE}/${modelId}:generateContent?key=${credentials.apiKey}`;

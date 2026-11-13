@@ -81,6 +81,8 @@ export async function prefetchRemoteImages(body, sourceFormat, targetFormat, opt
   if (!body || !TARGETS_NEED_BASE64.has(targetFormat)) return 0;
   const refs = collectImageRefs(body, sourceFormat);
   if (!refs.length) return 0;
+  // ponytail: proxy transports cannot pin image DNS; accept inline images until they can.
+  if (options.rejectRemoteFetch) throw new Error("Remote image downloads do not support API key proxies; send base64 images");
 
   let converted = 0;
   for (const ref of refs) {

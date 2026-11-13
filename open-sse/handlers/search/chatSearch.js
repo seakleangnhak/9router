@@ -5,6 +5,7 @@
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { ANTIGRAVITY_IDE_USER_AGENT } from "../../providers/shared.js";
+import { getCredentialFetch } from "../../utils/proxyFetch.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
 const searchModel = (id) => PROVIDER_MEDIA[id]?.searchViaChat?.defaultModel;
@@ -436,6 +437,7 @@ export async function handleChatSearch({
   log
 }) {
   const startTime = Date.now();
+  const fetch = getCredentialFetch(credentials);
   const cfg = CHAT_SEARCH_CONFIG[provider];
 
   if (!cfg) {
@@ -495,7 +497,8 @@ export async function handleChatSearch({
     return {
       success: false,
       status: 502,
-      error: `Network error: ${err?.message || "unknown"}`
+      error: `Network error: ${err?.message || "unknown"}`,
+      keyProxyError: err?.keyProxyError === true
     };
   }
   clearTimeout(timer);

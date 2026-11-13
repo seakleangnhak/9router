@@ -4,6 +4,7 @@ import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getExecutor } from "../executors/index.js";
 import { getImageAdapter } from "./imageProviders/index.js";
 import { urlToBase64 } from "./imageProviders/_base.js";
+import { getCredentialFetch } from "../utils/proxyFetch.js";
 
 function serializeRequestBody(requestBody) {
   if (typeof FormData !== "undefined" && requestBody instanceof FormData) return requestBody;
@@ -39,6 +40,7 @@ export async function handleImageGenerationCore({
   onUsage,
 }) {
   const { provider, model } = modelInfo;
+  const fetch = getCredentialFetch(credentials);
 
   if (!body.prompt) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
@@ -54,6 +56,9 @@ export async function handleImageGenerationCore({
 
   // Executor-delegating adapters: skip manual URL/headers/body, use the proven executor flow
   if (adapter.useExecutor && adapter.executeViaExecutor) {
+    if (credentials?.requestProxyOptions && getExecutor(provider).supportsRequestProxy === false) {
+      return { ...createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support API key proxies`), keyProxyError: true };
+    }
     try {
       log?.debug?.("IMAGE", `${provider.toUpperCase()} | ${model} | prompt="${body.prompt.slice(0, 50)}..." (executor)`);
       const responseBody = await adapter.executeViaExecutor(model, body, credentials, log);
@@ -65,7 +70,7 @@ export async function handleImageGenerationCore({
         const first = finalBody.data?.[0];
         let b64 = first?.b64_json;
         if (!b64 && first?.url) {
-          try { b64 = await urlToBase64(first.url); } catch {}
+          try { b64 = await urlToBase64(first.url, fetch); } catch {}
         }
         if (b64) {
           const buf = Buffer.from(b64, "base64");
@@ -90,7 +95,7 @@ export async function handleImageGenerationCore({
       const status = error.status || HTTP_STATUS.BAD_GATEWAY;
       const errMsg = formatProviderError(error, provider, model, status);
       log?.debug?.("IMAGE", `Executor error: ${errMsg}`);
-      return createErrorResult(status, errMsg, error.resetsAtMs);
+      return { ...createErrorResult(status, errMsg, error.resetsAtMs), keyProxyError: error.keyProxyError === true };
     }
   }
 
@@ -100,7 +105,7 @@ export async function handleImageGenerationCore({
 
   try {
     url = adapter.buildUrl(model, credentials, body);
-    requestBody = await adapter.buildBody(model, body);
+    requestBody = await adapter.buildBody(model, body, { rejectRemoteFetch: !!credentials?.requestProxyOptions });
     headers = adapter.buildHeaders(credentials, requestBody, model, body);
   } catch (error) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message || `Invalid ${provider} image request`);
@@ -118,7 +123,7 @@ export async function handleImageGenerationCore({
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("IMAGE", `Fetch error: ${errMsg}`);
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+    return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg), keyProxyError: error.keyProxyError === true };
   }
 
   // Handle 401/403 — try token refresh (skipped for noAuth providers)
@@ -149,7 +154,8 @@ export async function handleImageGenerationCore({
           headers: retryHeaders,
           body: serializeRequestBody(retryBody),
         });
-      } catch {
+      } catch (error) {
+        if (error.keyProxyError) return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message), keyProxyError: true };
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }
     } else {
@@ -172,7 +178,8 @@ export async function handleImageGenerationCore({
         });
         requestBody = fallbackBody;
         headers = fallbackHeaders;
-      } catch {
+      } catch (error) {
+        if (error.keyProxyError) return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message), keyProxyError: true };
         log?.warn?.("IMAGE", `${provider.toUpperCase()} | fallback request failed`);
       }
     }
@@ -199,6 +206,7 @@ export async function handleImageGenerationCore({
         requestBody,
         model,
         body,
+        fetch,
       });
       // Codex streaming case: returns an SSE Response directly
       if (parsed?.sseResponse) {
@@ -208,7 +216,7 @@ export async function handleImageGenerationCore({
       parsed = await providerResponse.json();
     }
   } catch (parseError) {
-    return createErrorResult(HTTP_STATUS.BAD_GATEWAY, parseError.message || `Invalid response from ${provider}`);
+    return { ...createErrorResult(HTTP_STATUS.BAD_GATEWAY, parseError.message || `Invalid response from ${provider}`), keyProxyError: parseError.keyProxyError === true };
   }
 
   if (onRequestSuccess) await onRequestSuccess();
@@ -224,7 +232,7 @@ export async function handleImageGenerationCore({
     const first = finalBody.data?.[0];
     let b64 = first?.b64_json;
     if (!b64 && first?.url) {
-      try { b64 = await urlToBase64(first.url); } catch {}
+      try { b64 = await urlToBase64(first.url, fetch); } catch {}
     }
     if (b64) {
       const buf = Buffer.from(b64, "base64");

@@ -90,7 +90,7 @@ export async function transcribeCodex({ formData, credentials, signal: clientSig
       ? new Response(data.text, { headers: { ...cors, "Content-Type": "text/plain; charset=utf-8" } })
       : Response.json({ text: data.text }, { headers: cors }) };
   } catch (error) {
-    return createErrorResult(error.status || (signal.aborted ? 504 : 502), error.status ? error.message : "Codex transcription failed");
+    return { ...createErrorResult(error.status || (signal.aborted ? 504 : 502), error.status ? error.message : "Codex transcription failed"), keyProxyError: error.keyProxyError === true };
   } finally {
     if (slot) active--;
   }

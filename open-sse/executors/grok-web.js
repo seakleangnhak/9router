@@ -353,6 +353,8 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, isThi
 }
 
 export class GrokWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("grok-web", PROVIDERS["grok-web"]);
   }

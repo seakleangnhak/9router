@@ -33,11 +33,14 @@ function customBaseUrl(creds) {
 
 // The router's image-to-image payload wants raw base64 — not a data URL, not a URL.
 // Accept every shape our own callers use (data URL, bare base64, remote URL, array).
-async function sourceImage(body) {
+async function sourceImage(body, { rejectRemoteFetch = false } = {}) {
   const raw = body?.image || (Array.isArray(body?.images) ? body.images[0] : null);
   if (typeof raw !== "string" || !raw.trim()) return null;
   const value = raw.trim();
-  if (/^https?:\/\//i.test(value)) return await urlToBase64(value);
+  if (/^https?:\/\//i.test(value)) {
+    if (rejectRemoteFetch) throw new Error("Remote image downloads do not support API key proxies; send base64 images");
+    return await urlToBase64(value);
+  }
   const match = /^data:image\/[^;]+;base64,(.+)$/i.exec(value);
   return match ? match[1] : value;
 }
@@ -70,12 +73,12 @@ export default {
     if (key) headers["Authorization"] = `Bearer ${key}`;
     return headers;
   },
-  buildBody: async (model, body) => {
+  buildBody: async (model, body, options) => {
     const entry = lookup(model);
     const task = mappingTask(entry || "");
 
     if (task === "image-to-image") {
-      const image = await sourceImage(body);
+      const image = await sourceImage(body, options);
       if (!image) {
         throw new Error(
           `HuggingFace: model "${model}" requires a source image. ` +

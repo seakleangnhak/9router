@@ -2,6 +2,7 @@
 // envelope (project, model, requestType, sessionId) and auth headers.
 import { nowSec, sizeToAspectRatio } from "./_base.js";
 import { getExecutor } from "../../executors/index.js";
+import { getCredentialProxyOptions } from "../../utils/proxyFetch.js";
 
 // Antigravity accepts up to 10 reference images per request
 const MAX_REFERENCE_IMAGES = 10;
@@ -91,6 +92,7 @@ export default {
       stream: false,
       credentials,
       log,
+      proxyOptions: getCredentialProxyOptions(credentials),
     });
 
     if (!result.response.ok) {

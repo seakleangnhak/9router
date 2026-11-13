@@ -776,6 +776,8 @@ function buildToolAwareOpenAIResult(opts) {
 // ── Executor ─────────────────────────────────────────────────────────────
 
 export class DeepSeekWebExecutor extends BaseExecutor {
+  supportsRequestProxy = false;
+
   constructor() {
     super("deepseek-web", { baseUrl: DEEPSEEK_WEB_BASE });
   }

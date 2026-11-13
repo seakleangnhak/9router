@@ -38,10 +38,11 @@ export function isStaleSocketError(error) {
 // Always fetch through the package's own undici instance so fetch and the
 // Agents below come from the same copy — dispatcher options are only guaranteed
 // to match within one undici version.
-let undiciFetch = null;
+let undiciPromise;
+const getUndici = () => undiciPromise ??= import("undici");
 async function rawFetch(url, options) {
-  undiciFetch ??= (await import("undici")).fetch;
-  return undiciFetch(url, options);
+  const { fetch } = await getUndici();
+  return fetch(url, options);
 }
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
@@ -168,6 +169,33 @@ const HTTP_SUCCESS_MAX = 300;
 function normalizeString(value) {
   if (value === undefined || value === null) return "";
   return String(value).trim();
+}
+
+export function getCredentialProxyOptions(credentials) {
+  if (credentials?.requestProxyOptions) return { ...credentials.requestProxyOptions, keyProxy: true };
+  const data = credentials?.providerSpecificData;
+  return {
+    connectionProxyEnabled: data?.connectionProxyEnabled === true,
+    connectionProxyUrl: data?.connectionProxyUrl || "",
+    connectionNoProxy: data?.connectionNoProxy || "",
+    vercelRelayUrl: data?.vercelRelayUrl || "",
+    proxyPoolId: data?.connectionProxyPoolId || null,
+    strictProxy: data?.strictProxy === true,
+  };
+}
+
+function strictProxyError(proxyOptions, message) {
+  const error = new Error(proxyOptions?.keyProxy ? "[ProxyFetch] API key proxy unavailable" : message);
+  if (proxyOptions?.keyProxy) error.keyProxyError = true;
+  return error;
+}
+
+export function getCredentialFetch(credentials) {
+  const proxyOptions = getCredentialProxyOptions(credentials);
+  if (credentials?.requestProxyOptions || proxyOptions.connectionProxyEnabled || proxyOptions.connectionProxyUrl || proxyOptions.vercelRelayUrl || proxyOptions.proxyPoolId) {
+    return (url, init) => proxyAwareFetch(url, init, proxyOptions);
+  }
+  return (url, init) => globalThis.fetch(url, init);
 }
 
 /** scheme://host:port only — never credentials. */
@@ -308,7 +336,7 @@ function evictOldest(cacheMap) {
 async function getOrCreateDirectAgent(key, insecure, keepAliveTimeout, keepAliveMaxTimeout) {
   const cached = directDispatchers.get(key);
   if (cached) return cached;
-  const { Agent } = await import("undici");
+  const { Agent } = await getUndici();
   evictOldest(directDispatchers);
   const agent = new Agent({
     connect: buildConnectOptions(insecure),
@@ -361,7 +389,7 @@ async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = fals
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
       proxyDispatchers.delete(proxyDispatchers.keys().next().value);
     }
-    const { ProxyAgent } = await import("undici");
+    const { ProxyAgent } = await getUndici();
     const dispatcher = new ProxyAgent({
       uri: normalized,
       connect: EYEBALLS_CONNECT,
@@ -475,6 +503,7 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 }
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  if (proxyOptions?.keyProxy) options = { ...options, strictTls: true };
   // Keep the spoofed Claude Code version current (new models require a minimum CLI version).
   // Refresh in the background: the request uses the version already known, so an
   // unreachable npm registry can never add latency to the chat path.
@@ -496,11 +525,25 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
-    return await rawFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
+    try {
+      const response = await rawFetch(vercelRelayUrl, {
+        ...options,
+        headers: relayHeaders,
+        ...(proxyOptions?.keyProxy ? { redirect: "manual" } : {}),
+      });
+      if (proxyOptions?.keyProxy && ((response.status >= 300 && response.status < 400) || response.status >= 500)) {
+        await response.body?.cancel?.().catch(() => {});
+        throw strictProxyError(proxyOptions, "Relay unavailable");
+      }
+      return response;
+    } catch (error) {
+      if (proxyOptions?.keyProxy) throw strictProxyError(proxyOptions, error.message);
+      throw error;
+    }
   }
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
-  const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
+  const envProxyUrl = connectionProxyUrl || proxyOptions?.keyProxy ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
   const forceFreshSocket = proxyOptions?.forceFreshSocket === true || options?.forceFreshSocket === true;
 
@@ -512,7 +555,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     || proxyOptions?.connectionProxyEnabled === true
     || !!normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
   if (!proxyUrl && proxyOptions?.strictProxy === true && proxyIntended) {
-    throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
+    throw strictProxyError(proxyOptions, "[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
   }
 
   // Protocol adapters that own their transport (wreq-js TLS impersonation)
@@ -529,7 +572,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       return res;
     } catch (err) {
       if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`);
+        throw strictProxyError(proxyOptions, `[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`);
       }
       throw err;
     }
@@ -543,7 +586,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
       } catch (proxyError) {
         if (proxyOptions?.strictProxy === true) {
-          throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+          throw strictProxyError(proxyOptions, `[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
@@ -564,7 +607,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     } catch (proxyError) {
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+        throw strictProxyError(proxyOptions, `[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
       return fetchWithTlsFallback(url, options, null, forceFreshSocket);
