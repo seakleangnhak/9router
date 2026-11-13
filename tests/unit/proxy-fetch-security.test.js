@@ -6,9 +6,13 @@ const network = vi.hoisted(() => ({
   ProxyAgent: vi.fn(function (options) { this.options = options; }),
   resolve4: vi.fn((hostname, callback) => callback(null, ["203.0.113.1"])),
   Socket: vi.fn(function () { throw new Error("Direct socket forbidden in test"); }),
+  ensureClaudeCliVersion: vi.fn(),
 }));
 
-vi.mock("undici", () => ({ fetch: network.fetch, Agent: network.Agent, ProxyAgent: network.ProxyAgent }));
+vi.mock("../../open-sse/utils/claudeCliVersion.js", () => ({
+  ensureClaudeCliVersion: network.ensureClaudeCliVersion,
+  applyClaudeCliVersion: (headers) => headers,
+}));
 vi.mock("dns", () => ({
   Resolver: class {
     setServers() {}
@@ -19,10 +23,12 @@ vi.mock("net", () => ({ Socket: network.Socket }));
 
 beforeEach(() => {
   vi.resetModules();
+  vi.doMock("undici", () => ({ fetch: network.fetch, Agent: network.Agent, ProxyAgent: network.ProxyAgent }));
   vi.clearAllMocks();
   network.fetch.mockReset();
+  network.ensureClaudeCliVersion.mockReset();
   vi.stubGlobal("fetch", network.fetch);
-  for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "STRICT_SSL"]) {
+  for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "STRICT_SSL", "CLAUDE_CLI_VERSION"]) {
     vi.stubEnv(name, undefined);
   }
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -119,5 +125,56 @@ describe("strict proxy blocks DNS bypass without a resolved proxy", () => {
     expect(network.resolve4).not.toHaveBeenCalled();
     expect(network.Socket).not.toHaveBeenCalled();
     expect(network.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Claude version lookup follows connection routing", () => {
+  const headers = { "User-Agent": "claude-cli/2.1.280", Authorization: "Bearer test-key" };
+  const metadataUrl = "https://registry.npmjs.org/@anthropic-ai/claude-code/latest";
+  const metadataInit = { headers: { Accept: "application/json" } };
+
+  it("uses the selected proxy for background metadata without forwarding credentials", async () => {
+    network.fetch.mockImplementation(async () => Response.json({ version: "2.1.999" }));
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    await proxyAwareFetch("https://api.example.com/v1/chat", { headers }, {
+      enabled: true, url: "http://proxy.example.com:8080", strictProxy: true,
+    });
+    expect(network.ensureClaudeCliVersion).toHaveBeenCalledOnce();
+    await network.ensureClaudeCliVersion.mock.calls[0][0](metadataUrl, metadataInit);
+
+    const metadata = network.fetch.mock.calls.find(([url]) => url.includes("registry.npmjs.org"));
+    expect(metadata).toBeDefined();
+    expect(metadata[1].headers).toEqual({ Accept: "application/json" });
+    expect(network.ProxyAgent).toHaveBeenCalledWith(expect.objectContaining({ uri: "http://proxy.example.com:8080" }));
+    expect(network.fetch.mock.calls.every(([, options]) => network.ProxyAgent.mock.instances.includes(options.dispatcher))).toBe(true);
+    expect(network.Agent).not.toHaveBeenCalled();
+  });
+
+  it("uses the configured relay for metadata", async () => {
+    network.fetch.mockImplementation(async () => Response.json({ version: "2.1.999" }));
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    await proxyAwareFetch("https://api.example.com/v1/chat", { headers }, {
+      vercelRelayUrl: "https://relay.example.com", strictProxy: true,
+    });
+    expect(network.ensureClaudeCliVersion).toHaveBeenCalledOnce();
+    await network.ensureClaudeCliVersion.mock.calls[0][0](metadataUrl, metadataInit);
+
+    expect(network.fetch).toHaveBeenCalledTimes(2);
+    expect(network.fetch.mock.calls.every(([url]) => url === "https://relay.example.com")).toBe(true);
+    const metadata = network.fetch.mock.calls.find(([, options]) => options.headers["x-relay-target"] === "https://registry.npmjs.org");
+    expect(metadata?.[1].headers.Authorization).toBeUndefined();
+    expect(metadata?.[1].headers["x-relay-path"]).toBe("/@anthropic-ai/claude-code/latest");
+  });
+
+  it("blocks metadata too when a strict pool has no resolved proxy", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    await expect(proxyAwareFetch("https://api.example.com/v1/chat", { headers }, {
+      proxyPoolId: "inactive-pool", strictProxy: true,
+    })).rejects.toThrow(/Proxy required but none resolved/);
+    expect(network.ensureClaudeCliVersion).toHaveBeenCalledOnce();
+    await expect(network.ensureClaudeCliVersion.mock.calls[0][0](metadataUrl, metadataInit)).rejects.toThrow(/Proxy required but none resolved/);
+
+    expect(network.fetch).not.toHaveBeenCalled();
+    expect(network.Agent).not.toHaveBeenCalled();
   });
 });
