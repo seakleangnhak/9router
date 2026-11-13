@@ -19,6 +19,8 @@ env:
 
 jobs:
   build-and-push:
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +32,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read app version
+        id: version
+        run: node -p "'version=' + require('./package.json').version + '-gpt-6.1-sol'" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -49,7 +55,7 @@ jobs:
           cache-from: type=gha,scope=fork-ghcr-gpt61-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=fork-ghcr-gpt61-${{ matrix.arch }}
           build-args: |
-            APP_VERSION=0.5.116-gpt-6.1-sol
+            APP_VERSION=${{ steps.version.outputs.version }}
           tags: ${{ env.GHCR_IMAGE }}:build-${{ github.run_id }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -74,6 +80,8 @@ jobs:
   publish:
     needs: build-and-push
     runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ needs.build-and-push.outputs.version }}
     steps:
       - uses: docker/setup-buildx-action@v3
 
@@ -89,8 +97,8 @@ jobs:
           docker buildx imagetools create \
             --tag "$GHCR_IMAGE:latest" \
             --tag "$GHCR_IMAGE:gpt-6.1-sol" \
-            --tag "$GHCR_IMAGE:0.5.116-gpt-6.1-sol" \
+            --tag "$GHCR_IMAGE:$APP_VERSION" \
             --tag "$GHCR_IMAGE:gpt-6.1-sol-fix" \
-            --tag "$GHCR_IMAGE:0.5.116-gpt-6.1-sol-fix" \
+            --tag "$GHCR_IMAGE:$APP_VERSION-fix" \
             "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-amd64" \
             "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-arm64"

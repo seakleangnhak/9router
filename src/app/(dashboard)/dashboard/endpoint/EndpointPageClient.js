@@ -37,6 +37,16 @@ export default function APIPageClient({ machineId }) {
   const [proxyPoolsError, setProxyPoolsError] = useState("");
   const [proxySaving, setProxySaving] = useState(null);
   const [proxyErrors, setProxyErrors] = useState({});
+  const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
+  const [bulkProxyError, setBulkProxyError] = useState("");
+  const bulkProxyDialogRef = useRef(null);
+
+  useEffect(() => {
+    if (!showBulkProxyModal) return;
+    const trigger = document.activeElement;
+    bulkProxyDialogRef.current?.focus();
+    return () => trigger?.focus();
+  }, [showBulkProxyModal]);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -729,20 +739,45 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const saveKeyProxy = async (id, proxyPoolId) => {
+    const res = await fetch(`/api/keys/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proxyPoolId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to update key proxy");
+    setKeys(prev => prev.map(key => key.id === id ? { ...key, proxyPoolId: data.key.proxyPoolId } : key));
+    setProxyErrors(prev => ({ ...prev, [id]: "" }));
+  };
+
   const handleKeyProxyChange = async (id, proxyPoolId) => {
     setProxySaving(id);
     setProxyErrors(prev => ({ ...prev, [id]: "" }));
     try {
-      const res = await fetch(`/api/keys/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proxyPoolId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to update key proxy");
-      setKeys(prev => prev.map(key => key.id === id ? { ...key, proxyPoolId: data.key.proxyPoolId } : key));
+      await saveKeyProxy(id, proxyPoolId);
     } catch (error) {
       setProxyErrors(prev => ({ ...prev, [id]: error.message }));
+    } finally {
+      setProxySaving(null);
+    }
+  };
+
+  const handleBulkProxyChange = async (poolIds) => {
+    setProxySaving("bulk");
+    setBulkProxyError("");
+    try {
+      let failed = 0;
+      for (const [index, key] of keys.entries()) {
+        try {
+          await saveKeyProxy(key.id, poolIds[index % poolIds.length]);
+        } catch (error) {
+          failed += 1;
+          setProxyErrors(prev => ({ ...prev, [key.id]: error.message }));
+        }
+      }
+      if (failed) setBulkProxyError(`Updated ${keys.length - failed} of ${keys.length} keys. ${failed} failed; see key errors below. Retry or close to review.`);
+      else setShowBulkProxyModal(false);
     } finally {
       setProxySaving(null);
     }
@@ -802,22 +837,23 @@ export default function APIPageClient({ machineId }) {
   const currentEndpoint = baseUrl;
   const keyProxyGuidance = "Key proxies override inference routing and block requests if the proxy fails. Token refresh and background tasks keep existing routing. Use the same stable proxy for each Codex/OpenAI account.";
 
-  const renderProxySelect = (id, value, onChange, disabled = false) => {
+  const renderProxySelect = (id, value, onChange, disabled = false, compactLabel = "") => {
     const assignedPool = proxyPools.find(pool => pool.id === value);
     const unavailable = value && !assignedPool?.isActive;
     const poolsLoaded = !proxyPoolsLoading && !proxyPoolsError;
     return (
-      <div className="flex flex-col gap-1.5 max-w-sm">
-        <label htmlFor={id} className="text-sm font-medium text-text-main">Proxy pool</label>
+      <div className={compactLabel ? "w-40 max-w-full shrink-0 sm:w-44" : "flex flex-col gap-1.5 max-w-sm"}>
+        <label htmlFor={id} className={compactLabel ? "sr-only" : "text-sm font-medium text-text-main"}>{compactLabel || "Proxy pool"}</label>
         <select
           id={id}
           value={value ?? ""}
           onChange={event => onChange(event.target.value || null)}
           disabled={disabled || proxyPoolsLoading || !!proxyPoolsError}
           aria-describedby={unavailable && poolsLoaded ? `${id}-hint` : undefined}
-          className="w-full py-2.5 px-3 text-base sm:text-sm text-text-main bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
+          title={assignedPool?.name || (value ? "Assigned pool unavailable" : "Inherit account/global proxy")}
+          className={`w-full min-w-0 truncate px-2 text-base sm:text-xs text-text-main bg-surface-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed ${compactLabel ? "h-9" : "py-2.5"}`}
         >
-          <option value="">Inherit account/global proxy</option>
+          <option value="">{compactLabel ? "Inherit proxy" : "Inherit account/global proxy"}</option>
           {unavailable && (
             <option value={value} disabled>
               {assignedPool ? `${assignedPool.name} (inactive)` : `Assigned pool (${poolsLoaded ? "unavailable" : "not loaded"})`}
@@ -827,7 +863,7 @@ export default function APIPageClient({ machineId }) {
             <option key={pool.id} value={pool.id}>{pool.name}</option>
           ))}
         </select>
-        {unavailable && poolsLoaded && (
+        {unavailable && poolsLoaded && !compactLabel && (
           <p id={`${id}-hint`} className="text-xs text-orange-500">
             Assigned pool is unavailable. Requests stay blocked until the pool is restored or changed.
           </p>
@@ -1096,14 +1132,26 @@ export default function APIPageClient({ machineId }) {
 
       {/* API Keys */}
       <Card id="require-api-key">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">vpn_key</span>
             API Keys
           </h2>
-          <Button icon="add" onClick={() => setShowAddModal(true)}>
-            Create Key
-          </Button>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {keys.length > 0 && (
+              <Button
+                variant="secondary"
+                icon="lan"
+                disabled={proxySaving !== null || proxyPoolsLoading || !!proxyPoolsError}
+                onClick={() => { setBulkProxyError(""); setShowBulkProxyModal(true); }}
+              >
+                Apply Proxy
+              </Button>
+            )}
+            <Button icon="add" onClick={() => setShowAddModal(true)}>
+              Create Key
+            </Button>
+          </div>
         </div>
 
         <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
@@ -1188,11 +1236,6 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
-                  <div className="mt-3" aria-busy={proxySaving === key.id}>
-                    {renderProxySelect(`key-proxy-${key.id}`, key.proxyPoolId, value => handleKeyProxyChange(key.id, value), proxySaving !== null)}
-                    {proxySaving === key.id && <p role="status" className="text-xs text-text-muted mt-1">Saving proxy…</p>}
-                    {proxyErrors[key.id] && <p role="alert" className="text-sm text-red-500 mt-1">{proxyErrors[key.id]}</p>}
-                  </div>
                   <KeyAccessControls
                     apiKey={key}
                     onChange={(access) => handleUpdateKeyAccess(key.id, access)}
@@ -1206,50 +1249,100 @@ export default function APIPageClient({ machineId }) {
                     })}
                   />
                 </div>
-                <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto pt-0.5">
-                  <button
-                    type="button"
-                    aria-label={`Fast mode for ${key.name}: ${key.fastMode.toUpperCase()}. Click to set ${FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length].toUpperCase()}`}
-                    aria-busy={fastModeSaving === key.id}
-                    disabled={fastModeSaving !== null}
-                    onClick={() => handleFastModeChange(key.id, FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length])}
-                    title={fastModeSaving === key.id ? "Saving Fast mode…" : `${key.fastMode.toUpperCase()}: ${key.fastMode === "off" ? "Force normal speed" : key.fastMode === "on" ? "Follow client request" : "Always request priority"}`}
-                    className={`inline-flex h-9 items-center justify-center gap-1 px-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-wait ${key.fastMode === "force" ? "bg-primary/20 text-primary ring-1 ring-primary" : key.fastMode === "on" ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
-                  >
-                    <span aria-hidden="true" className={`material-symbols-outlined text-[22px] ${key.fastMode !== "off" ? "fill-1" : ""}`}>bolt</span>
-                    <span className="text-[10px] font-semibold text-text-main">{key.fastMode.toUpperCase()}</span>
-                  </button>
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
-                        setConfirmState({
-                          title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
-                          onConfirm: async () => {
-                            setConfirmState(null);
-                            handleToggleKey(key.id, checked);
-                          }
-                        });
-                      } else {
-                        handleToggleKey(key.id, checked);
-                      }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:shrink-0 sm:items-end pt-0.5">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2" aria-busy={proxySaving === key.id || proxySaving === "bulk"}>
+                    {renderProxySelect(`key-proxy-${key.id}`, key.proxyPoolId, value => handleKeyProxyChange(key.id, value), proxySaving !== null, `Proxy pool for ${key.name}`)}
+                    <button
+                      type="button"
+                      aria-label={`Fast mode for ${key.name}: ${key.fastMode.toUpperCase()}. Click to set ${FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length].toUpperCase()}`}
+                      aria-busy={fastModeSaving === key.id}
+                      disabled={fastModeSaving !== null}
+                      onClick={() => handleFastModeChange(key.id, FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length])}
+                      title={fastModeSaving === key.id ? "Saving Fast mode…" : `${key.fastMode.toUpperCase()}: ${key.fastMode === "off" ? "Force normal speed" : key.fastMode === "on" ? "Follow client request" : "Always request priority"}`}
+                      className={`inline-flex h-9 items-center justify-center gap-1 px-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-wait ${key.fastMode === "force" ? "bg-primary/20 text-primary ring-1 ring-primary" : key.fastMode === "on" ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
+                    >
+                      <span aria-hidden="true" className={`material-symbols-outlined text-[22px] ${key.fastMode !== "off" ? "fill-1" : ""}`}>bolt</span>
+                      <span className="text-[10px] font-semibold text-text-main">{key.fastMode.toUpperCase()}</span>
+                    </button>
+                    <Toggle
+                      size="sm"
+                      checked={key.isActive ?? true}
+                      onChange={(checked) => {
+                        if (key.isActive && !checked) {
+                          setConfirmState({
+                            title: "Pause API Key",
+                            message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
+                            onConfirm: async () => {
+                              setConfirmState(null);
+                              handleToggleKey(key.id, checked);
+                            }
+                          });
+                        } else {
+                          handleToggleKey(key.id, checked);
+                        }
+                      }}
+                      title={key.isActive ? "Pause key" : "Resume key"}
+                    />
+                    <button
+                      onClick={() => handleDeleteKey(key.id)}
+                      className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
+                  {proxySaving === key.id && <p role="status" className="text-xs text-text-muted">Saving proxy…</p>}
+                  {key.proxyPoolId && !proxyPoolsLoading && !proxyPoolsError && !proxyPools.some(pool => pool.id === key.proxyPoolId && pool.isActive) && (
+                    <p id={`key-proxy-${key.id}-hint`} className="text-xs text-orange-500 sm:max-w-xs">Assigned pool unavailable. Requests stay blocked.</p>
+                  )}
+                  {proxyErrors[key.id] && <p role="alert" className="text-sm text-red-500 sm:max-w-xs">{proxyErrors[key.id]}</p>}
                 </div>
               </div>
             ))}
           </div>
         )}
       </Card>
+
+      <Modal
+        isOpen={showBulkProxyModal}
+        title={`Apply Proxy (${keys.length} keys)`}
+        onClose={() => { if (proxySaving === null) setShowBulkProxyModal(false); }}
+      >
+        <div
+          ref={bulkProxyDialogRef}
+          role="dialog"
+          aria-label={`Apply Proxy (${keys.length} keys)`}
+          aria-modal="true"
+          tabIndex={-1}
+          className="flex flex-col gap-3 outline-none"
+          onKeyDown={event => {
+            if (event.key !== "Tab") return;
+            const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")];
+            const active = document.activeElement;
+            if (!buttons.includes(active) || active === buttons[event.shiftKey ? 0 : buttons.length - 1]) {
+              event.preventDefault();
+              buttons[event.shiftKey ? buttons.length - 1 : 0]?.focus();
+            }
+          }}
+        >
+          <p className="text-sm text-text-muted">Apply to all keys, including paused keys. One-to-one assigns active pools in order, repeating when needed.</p>
+          <div className="flex flex-col gap-1">
+            <Button variant="ghost" icon="sync_alt" className="justify-start" disabled={proxySaving !== null || !proxyPools.some(pool => pool.isActive)} onClick={() => handleBulkProxyChange(proxyPools.filter(pool => pool.isActive).map(pool => pool.id))}>
+              One-to-one (rotate)
+            </Button>
+            <Button variant="ghost" icon="link_off" className="justify-start" disabled={proxySaving !== null} onClick={() => handleBulkProxyChange([null])}>
+              Inherit account/global proxy (all keys)
+            </Button>
+            {proxyPools.map(pool => (
+              <Button key={pool.id} variant="ghost" icon="lan" className="justify-start" disabled={proxySaving !== null || !pool.isActive} onClick={() => handleBulkProxyChange([pool.id])}>
+                <span className="truncate">{pool.name}{pool.isActive ? "" : " (inactive)"}</span>
+              </Button>
+            ))}
+          </div>
+          {proxySaving === "bulk" && <p role="status" className="text-sm text-text-muted">Applying proxy assignments…</p>}
+          {bulkProxyError && <p role="alert" className="text-sm text-red-500">{bulkProxyError}</p>}
+          <Button variant="ghost" fullWidth disabled={proxySaving !== null} onClick={() => setShowBulkProxyModal(false)}>Close</Button>
+        </div>
+      </Modal>
 
       {/* Add Key Modal */}
       <Modal

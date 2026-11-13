@@ -1,3 +1,8 @@
+# Local key proxy dashboard fixes (2026-11-13)
+
+- Show merged upstream version 0.5.119 and derive Docker image versions from package metadata.
+- Place compact key proxy selectors before Fast mode and add Apply Proxy for one pool, rotation, or inherited routing across all keys; retain partial-save errors.
+
 # Local API key proxies (2026-11-13)
 
 - Assign saved HTTP/HTTPS proxy pools to individual 9Router keys; reject invalid assignments and retain account/global routing for unassigned keys.
