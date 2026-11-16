@@ -4,10 +4,21 @@ import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK, VALID_OPENAI_CONTENT_TYPES, VALID_OPE
 // Re-export valid-type lists (moved to schema/blocks.js) to keep existing importers working.
 export { VALID_OPENAI_CONTENT_TYPES, VALID_OPENAI_MESSAGE_TYPES };
 
+export function normalizeOpenAITextControls(body) {
+  if (body.text?.verbosity !== undefined) body.verbosity = body.text.verbosity;
+  if (body.text?.format) {
+    const { type, ...jsonSchema } = body.text.format;
+    body.response_format = type === "json_schema" ? { type, json_schema: jsonSchema } : body.text.format;
+  }
+  delete body.text;
+  return body;
+}
+
 // Filter messages to OpenAI standard format
 // Remove: thinking, redacted_thinking, signature, and other non-OpenAI blocks
 // opts.preserveCacheControl: keep cache_control on content blocks (e.g. for DashScope/alicode)
 export function filterToOpenAIFormat(body, opts = {}) {
+  normalizeOpenAITextControls(body);
   if (!body.messages || !Array.isArray(body.messages)) return body;
   const keepCache = !!opts.preserveCacheControl;
 

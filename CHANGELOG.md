@@ -3,6 +3,7 @@
 - Select Responses or Compact from the current request, preserving the endpoint across retries and concurrent requests.
 - Keep normal Responses text settings and send only supported fields to Compact.
 - Convert Responses text settings to Chat Completions verbosity and response format during provider fallback, preventing unknown-parameter errors while preserving structured outputs.
+- Apply text-control conversion at the final Chat Completions boundary for mixed requests that already contain messages, including combo routing.
 
 # Local key proxy dashboard fixes (2026-11-13)
 

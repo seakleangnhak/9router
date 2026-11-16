@@ -6,6 +6,7 @@
  */
 import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
+import { normalizeOpenAITextControls } from "../formats/openai.js";
 import {
   normalizeResponsesInput,
   clampResponsesCallId,
@@ -231,11 +232,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
 
-  if (body.text?.verbosity !== undefined) result.verbosity = body.text.verbosity;
-  if (body.text?.format) {
-    const { type, ...jsonSchema } = body.text.format;
-    result.response_format = type === "json_schema" ? { type, json_schema: jsonSchema } : body.text.format;
-  }
+  normalizeOpenAITextControls(result);
 
   // Cleanup Responses API specific fields
   // Map Responses-only max_output_tokens to Chat max_tokens (avoid leaking unknown field upstream)
@@ -254,7 +251,6 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
   delete result.reasoning;
   delete result.client_metadata;
-  delete result.text;
 
   return result;
 }
