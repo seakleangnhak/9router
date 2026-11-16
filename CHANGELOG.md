@@ -1,7 +1,8 @@
-# Local Codex compact routing fix (2026-11-16)
+# Local Codex routing and fallback fixes (2026-11-16)
 
 - Select Responses or Compact from the current request, preserving the endpoint across retries and concurrent requests.
 - Keep normal Responses text settings and send only supported fields to Compact.
+- Convert Responses text settings to Chat Completions verbosity and response format during provider fallback, preventing unknown-parameter errors while preserving structured outputs.
 
 # Local key proxy dashboard fixes (2026-11-13)
 

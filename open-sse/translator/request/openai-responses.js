@@ -231,6 +231,12 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
 
+  if (body.text?.verbosity !== undefined) result.verbosity = body.text.verbosity;
+  if (body.text?.format) {
+    const { type, ...jsonSchema } = body.text.format;
+    result.response_format = type === "json_schema" ? { type, json_schema: jsonSchema } : body.text.format;
+  }
+
   // Cleanup Responses API specific fields
   // Map Responses-only max_output_tokens to Chat max_tokens (avoid leaking unknown field upstream)
   if (result.max_output_tokens !== undefined) {
@@ -248,6 +254,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
   delete result.reasoning;
   delete result.client_metadata;
+  delete result.text;
 
   return result;
 }
@@ -458,6 +465,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };
   if (body.service_tier !== undefined) result.service_tier = body.service_tier;
   if (body.prompt_cache_key !== undefined) result.prompt_cache_key = body.prompt_cache_key;
+  if (body.verbosity !== undefined || body.response_format) {
+    result.text = {};
+    if (body.verbosity !== undefined) result.text.verbosity = body.verbosity;
+    if (body.response_format) {
+      const { type, json_schema: jsonSchema } = body.response_format;
+      result.text.format = type === "json_schema" ? { type, ...jsonSchema } : body.response_format;
+    }
+  }
 
   return result;
 }
