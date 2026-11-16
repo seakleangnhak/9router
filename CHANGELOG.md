@@ -4,6 +4,7 @@
 - Keep normal Responses text settings and send only supported fields to Compact.
 - Convert Responses text settings to Chat Completions verbosity and response format during provider fallback, preventing unknown-parameter errors while preserving structured outputs.
 - Apply text-control conversion at the final Chat Completions boundary for mixed requests that already contain messages, including combo routing.
+- Route OpenAI GPT-6.1 Sol through Responses so function tools work with reasoning enabled; retain native Responses requests and convert Chat clients to the Responses wire.
 
 # Local key proxy dashboard fixes (2026-11-13)
 
