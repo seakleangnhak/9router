@@ -102,8 +102,9 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
     preserveCacheControl: targetFormat === FORMATS.OPENAI && !!PROVIDERS[provider]?.quirks?.preserveCacheControl,
   };
 
-  // If same format, skip translation steps
-  if (sourceFormat !== targetFormat) {
+  // Responses endpoints can receive Chat-shaped bodies that still need conversion.
+  if (sourceFormat !== targetFormat ||
+      (targetFormat === FORMATS.OPENAI_RESPONSES && !result.input && Array.isArray(result.messages))) {
     // Direct route: if a translator is registered for this exact source:target
     // pair, use it instead of pivoting through OpenAI. This is lossless for
     // pairs like claude:kiro (avoids the claude->openai->kiro double-hop).

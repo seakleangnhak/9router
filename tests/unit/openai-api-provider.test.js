@@ -53,13 +53,14 @@ const responsesEvents = [
 ];
 const responsesSSE = responsesEvents.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 
-function chat(body, headers = {}) {
+function chat(body, headers = {}, sourceFormatOverride) {
   return handleChatCore({
     body,
+    sourceFormatOverride,
     modelInfo: { provider: "openai", model: body.model.replace(/^openai\//, "") },
     credentials: { apiKey: "sk-openai-fixture", providerSpecificData: {} },
     connectionId: "openai-fixture",
-    clientRawRequest: { endpoint: body.input ? "/v1/responses" : "/v1/chat/completions", body: structuredClone(body), headers },
+    clientRawRequest: { endpoint: body.input || sourceFormatOverride === "openai-responses" ? "/v1/responses" : "/v1/chat/completions", body: structuredClone(body), headers },
   });
 }
 
@@ -190,6 +191,28 @@ describe("OpenAI API provider", () => {
       choices: [{ message: { role: "assistant", content: "Checking weather",
         tool_calls: [{ id: "call-fixture", type: "function", function: { name: "lookup", arguments: '{"city":"Phnom Penh"}' } }] },
       finish_reason: "tool_calls" }], usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } });
+  });
+
+  it.each(["nested", "flat"])("converts GPT-6.1 Sol messages at /responses and preserves text and %s tools", async (toolShape) => {
+    upstreamFetch.mockResolvedValueOnce(new Response(responsesSSE, { headers: { "content-type": "text/event-stream" } }));
+    const { type, ...fn } = functionTool;
+    const text = { format: { type: "text" }, verbosity: "low" };
+    const result = await chat({ model: "openai/gpt-6.1-sol", stream: false, reasoning_effort: "low", text,
+      messages: [{ role: "user", content: "Weather in Phnom Penh?" }],
+      tools: [toolShape === "nested" ? { type, function: fn } : functionTool] }, {}, "openai-responses");
+
+    expect(upstreamFetch).toHaveBeenCalledOnce();
+    const [url, init] = upstreamFetch.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/responses");
+    const sent = JSON.parse(init.body);
+    expect(sent).toMatchObject({ model: "gpt-6.1-sol", stream: true, text, tools: [functionTool], reasoning: { effort: "low" },
+      input: [{ role: "user", content: [{ type: "input_text", text: "Weather in Phnom Penh?" }] }] });
+    expect(sent).not.toHaveProperty("messages");
+    expect(sent).not.toHaveProperty("reasoning_effort");
+    expect(result.success).toBe(true);
+    expect(result.response.headers.get("content-type")).toContain("application/json");
+    expect(await result.response.json()).toMatchObject({ object: "response", status: "completed",
+      output: responsesCompletion.output, usage: responsesCompletion.usage });
   });
 
   it.each(["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"])("lists %s on the API-key provider", (model) => {

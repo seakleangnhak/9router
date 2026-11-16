@@ -431,7 +431,7 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   // Convert tools format
   if (body.tools && Array.isArray(body.tools)) {
     result.tools = body.tools.map(tool => {
-      if (tool.type === OPENAI_BLOCK.FUNCTION) {
+      if (tool.type === OPENAI_BLOCK.FUNCTION && tool.function) {
         // Strict upstreams reject nameless/overlong tool declarations
         const name = typeof tool.function?.name === "string" ? tool.function.name.trim() : "";
         if (!name) return null;
@@ -461,8 +461,9 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };
   if (body.service_tier !== undefined) result.service_tier = body.service_tier;
   if (body.prompt_cache_key !== undefined) result.prompt_cache_key = body.prompt_cache_key;
+  if (body.text !== undefined) result.text = body.text;
   if (body.verbosity !== undefined || body.response_format) {
-    result.text = {};
+    result.text = { ...body.text };
     if (body.verbosity !== undefined) result.text.verbosity = body.verbosity;
     if (body.response_format) {
       const { type, json_schema: jsonSchema } = body.response_format;
