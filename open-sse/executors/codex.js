@@ -50,6 +50,10 @@ const RESPONSES_API_ALLOWLIST = new Set([
   "text", "parallel_tool_calls"
 ]);
 
+const COMPACT_API_ALLOWLIST = new Set([
+  "model", "input", "instructions", "prompt_cache_key", "service_tier"
+]);
+
 // Convert role=system → role=developer in body.input (keeps content in cacheable prefix)
 function convertSystemToDeveloperRole(body) {
   if (!Array.isArray(body.input)) return;
@@ -217,9 +221,10 @@ export class CodexExecutor extends BaseExecutor {
    * Override headers to add codex-specific identity headers.
    * transformRequest runs BEFORE buildHeaders, sets this._currentSessionId.
    */
-  buildHeaders(credentials, stream = true, _url = null, model = null, body = null) {
-    const headers = super.buildHeaders(credentials, stream);
-    if (isCodexResponsesLiteModel(model && getModelUpstreamId("cx", model)) && !body?.tools?.some?.(tool => tool?.type === "web_search")) {
+  buildHeaders(credentials, stream = true, url = null, model = null, body = null) {
+    const compact = url?.endsWith("/compact");
+    const headers = super.buildHeaders(credentials, compact ? false : stream);
+    if (!compact && isCodexResponsesLiteModel(model && getModelUpstreamId("cx", model)) && !body?.tools?.some?.(tool => tool?.type === "web_search")) {
       headers["x-openai-internal-codex-responses-lite"] = "true";
     }
     headers["session_id"] = this._currentSessionId || credentials?.connectionId || "default";
@@ -240,9 +245,9 @@ export class CodexExecutor extends BaseExecutor {
     return headers;
   }
 
-  buildUrl(model, stream, urlIndex = 0, credentials = null) {
+  buildUrl(model, stream, urlIndex = 0, credentials = null, body = null) {
     const base = super.buildUrl(model, stream, urlIndex, credentials);
-    return this._isCompact ? `${base}/compact` : base;
+    return body?._compact ? `${base}/compact` : base;
   }
 
   async refreshCredentials(credentials, log) {
@@ -415,10 +420,22 @@ export class CodexExecutor extends BaseExecutor {
    * Image fetching is handled separately in prefetchImages() so this stays sync.
    */
   transformRequest(model, body, stream, credentials) {
-    this._isCompact = !!body._compact;
-    delete body._compact;
     // Resolve conversation-stable session_id (priority: body → assistant-text → workspace → machine)
     this._currentSessionId = resolveCacheSessionId(body, credentials);
+    if (body._compact) {
+      const compactBody = {
+        ...body,
+        model: getModelUpstreamId("cx", body.model || model),
+        input: normalizeResponsesInput(body.input) || body.input,
+      };
+      if (compactBody.service_tier === "fast") compactBody.service_tier = "priority";
+      if (compactBody.service_tier !== "priority") delete compactBody.service_tier;
+      for (const key of Object.keys(compactBody)) {
+        if (!COMPACT_API_ALLOWLIST.has(key)) delete compactBody[key];
+      }
+      return compactBody;
+    }
+    delete body._compact;
     // Convert string input to array format (Codex API requires input as array)
     const normalized = normalizeResponsesInput(body.input);
     if (normalized) body.input = normalized;

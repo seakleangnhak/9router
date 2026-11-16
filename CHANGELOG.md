@@ -1,3 +1,8 @@
+# Local Codex compact routing fix (2026-11-16)
+
+- Select Responses or Compact from the current request, preserving the endpoint across retries and concurrent requests.
+- Keep normal Responses text settings and send only supported fields to Compact.
+
 # Local key proxy dashboard fixes (2026-11-13)
 
 - Show merged upstream version 0.5.119 and derive Docker image versions from package metadata.
