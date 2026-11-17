@@ -15,6 +15,68 @@ process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
 
 let backgroundRefreshStarted = false;
 
+function logRequestDiagnostics(req, res) {
+  if (process.env.NINEROUTER_REQUEST_DIAGNOSTICS !== "true") return;
+
+  const pathname = String(req.url || "").split(/[?#]/, 1)[0];
+  const match = /^(\/api\/v1|\/v1|\/codex|\/responses)(\/.*)?$/.exec(pathname);
+  if (!match) return;
+  // Only fixed endpoint names may enter logs; unknown suffixes can contain secrets.
+  const knownEndpoints = new Set([
+    "", "/chat/completions", "/responses", "/responses/compact", "/messages",
+    "/messages/count_tokens", "/models", "/embeddings", "/images/generations",
+    "/audio/speech", "/audio/transcriptions", "/audio/voices", "/search",
+  ]);
+  const suffix = match[2] || "";
+  const diagnosticPath = match[1] + (knownEndpoints.has(suffix) ? suffix : "/:path");
+  const requestId = crypto.randomUUID();
+  const started = process.hrtime.bigint();
+  const elapsedMs = () => Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+  const contentLength = req.headers["content-length"];
+  const expectedContentLength = typeof contentLength === "string" && /^\d+$/.test(contentLength)
+    && Number.isSafeInteger(Number(contentLength)) ? Number(contentLength) : null;
+  let bodyReadMs = null;
+  let terminalLogged = false;
+
+  res.setHeader("X-9Router-Request-Id", requestId);
+  const log = (event) => {
+    console.info("[RequestDiagnostics]", JSON.stringify({
+      timestamp: new Date().toISOString(),
+      requestId,
+      event,
+      method: http.METHODS.includes(req.method) ? req.method : "OTHER",
+      path: diagnosticPath,
+      elapsedMs: elapsedMs(),
+      expectedContentLength,
+      bodyComplete: req.complete === true,
+      bodyRead: req.readableEnded === true,
+      bodyReadMs,
+      responseStarted: res.headersSent,
+      status: res.headersSent ? res.statusCode : null,
+      responseFinished: res.writableFinished,
+    }));
+  };
+  const onEnd = () => { bodyReadMs = elapsedMs(); };
+  const terminal = (event) => {
+    if (terminalLogged) return;
+    terminalLogged = true;
+    log(event);
+    req.off("end", onEnd);
+    req.off("aborted", onAborted);
+    res.off("finish", onFinish);
+    res.off("close", onClose);
+  };
+  const onAborted = () => terminal("request_aborted");
+  const onFinish = () => terminal("response_finished");
+  const onClose = () => terminal(res.writableFinished ? "response_finished" : "response_closed");
+
+  req.once("end", onEnd);
+  req.once("aborted", onAborted);
+  res.once("finish", onFinish);
+  res.once("close", onClose);
+  log("start");
+}
+
 function startBackgroundTokenRefreshFromCustomServer() {
   if (backgroundRefreshStarted) return;
   backgroundRefreshStarted = true;
@@ -70,6 +132,7 @@ http.createServer = (...args) => {
     req.headers["x-9r-real-ip"] = ip;
     req.headers["x-9r-peer-token"] = PEER_TOKEN;
     if (viaProxy) req.headers["x-9r-via-proxy"] = "1";
+    logRequestDiagnostics(req, res);
     return handler(req, res);
   };
   const server = origCreate(...rest, wrapped);

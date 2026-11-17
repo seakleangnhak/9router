@@ -1,3 +1,8 @@
+# Local HTTP diagnostics (2026-11-17)
+
+- Add opt-in request IDs and HTTP lifecycle timing to investigate interrupted API uploads and responses.
+- Keep credentials, query strings, request content, and arbitrary path segments out of diagnostic logs.
+
 # Local Codex routing and fallback fixes (2026-11-16)
 
 - Select Responses or Compact from the current request, preserving the endpoint across retries and concurrent requests.
