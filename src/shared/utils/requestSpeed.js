@@ -9,3 +9,12 @@ export function getTokensPerSecond(tokens, durationMs) {
 export function formatTokensPerSecond(value) {
   return Number.isFinite(value) && value >= 0 ? value.toFixed(1) : "—";
 }
+
+const TIER_LABELS = {
+  default: "Standard", priority: "Fast", fast: "Fast", ultrafast: "Ultrafast",
+  auto: "Auto", flex: "Flex", scale: "Scale", other: "Other",
+};
+
+export function formatServiceTier(tier, fallback = "Not reported") {
+  return typeof tier === "string" && Object.hasOwn(TIER_LABELS, tier) ? TIER_LABELS[tier] : fallback;
+}

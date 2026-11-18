@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { normalizeServiceTier, normalizeReportedServiceTier } from "open-sse/config/serviceTiers.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -110,6 +111,8 @@ async function flushToDatabase() {
             timestamp: item.timestamp,
             status: item.status || null,
             latency: item.latency || {},
+            requestedTier: normalizeServiceTier(item.requestedTier) ?? undefined,
+            actualTier: normalizeReportedServiceTier(item.actualTier) ?? undefined,
             tokens: item.tokens || {},
             request: truncateField(item.request, config.maxJsonSize),
             providerRequest: truncateField(item.providerRequest, config.maxJsonSize),

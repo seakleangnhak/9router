@@ -172,4 +172,28 @@ describe("request TPS persistence", () => {
     expect((await usage.getActiveRequests()).recentRequests.find((r) => r.model === "legacy").tokensPerSecond).toBeNull();
     expect((await usage.getUsageStats()).recentRequests.find((r) => r.model === "legacy").tokensPerSecond).toBeNull();
   });
+
+  it("retains only recognized actual tiers in both recent request feeds and after reload", async () => {
+    const timestamp = "2026-11-18T12:00:00.000Z";
+    const tokens = { prompt_tokens: 14, completion_tokens: 16 };
+    for (const [i, actualTier] of ["default", "priority", "secret-tier", "auto"].entries()) {
+      await usage.saveRequestUsage({
+        provider: "openai", model: "tier-test", timestamp: timestamp.replace(".000Z", `.00${i}Z`),
+        tokens, requestedTier: "ultrafast", actualTier,
+      });
+    }
+    const expected = expect.arrayContaining([null, "priority", "default"]);
+    const recentTiers = (stats) => stats.recentRequests.filter((r) => r.model === "tier-test").map((r) => r.actualTier);
+    expect(recentTiers(await usage.getActiveRequests())).toEqual(expected);
+    expect(recentTiers(await usage.getUsageStats())).toEqual(expected);
+    global._recentRing.items = [];
+    global._recentRing.initialized = false;
+    expect(recentTiers(await usage.getActiveRequests())).toEqual(expected);
+    const rows = adapter.all("SELECT meta FROM usageHistory WHERE model = ? ORDER BY id", ["tier-test"]);
+    expect(rows.map((row) => JSON.parse(row.meta))).toEqual([
+      { requestedTier: "ultrafast", actualTier: "default" },
+      { requestedTier: "ultrafast", actualTier: "priority" },
+      { requestedTier: "ultrafast" }, { requestedTier: "ultrafast" },
+    ]);
+  });
 });

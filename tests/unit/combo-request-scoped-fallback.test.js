@@ -28,6 +28,19 @@ function validationError(message = "Request validation failed") {
 }
 
 describe("combo fallback — request-scoped 4xx from a member", () => {
+  it("links the selected stream to its original response after peeking", async () => {
+    const original = new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n', {
+      headers: { "content-type": "text/event-stream" },
+    });
+    const onResponseWrapped = vi.fn();
+    const response = await handleComboChat({
+      body: { stream: true }, models: ["provider/model"], handleSingleModel: async () => original,
+      log: silentLog, comboStrategy: "fallback", onResponseWrapped,
+    });
+    expect(response).not.toBe(original);
+    expect(onResponseWrapped).toHaveBeenCalledExactlyOnceWith(original, response);
+    expect(await response.text()).toContain('"content":"hi"');
+  });
   it("flags a generic 400 as request-scoped without cooling the account", () => {
     expect(checkFallbackError(400, "Request validation failed")).toEqual({
       shouldFallback: false,

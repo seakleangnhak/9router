@@ -70,6 +70,30 @@ describe("dashboard guard public LLM API access", () => {
     expect(mocks.validateApiKey).not.toHaveBeenCalled();
   });
 
+  it("requires dashboard access for request traces, not a provider API key", async () => {
+    const req = request("/api/usage/request-traces", { authorization: "Bearer llm-key" });
+    mocks.validateApiKey.mockResolvedValue(true);
+    expect((await proxy(req)).status).toBe(401);
+    req.cookies.get.mockReturnValue({ value: "dashboard-session" });
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect(await proxy(req)).toBe(mocks.nextResponse);
+  });
+
+  it.each([true, false])("blocks trace reads on disabled tunnels with requireLogin=%s", async (requireLogin) => {
+    const settings = { requireLogin, tunnelUrl: "https://router-tunnel.example.com", tailscaleUrl: "https://router.tailnet.example.com", tunnelDashboardAccess: false };
+    mocks.getSettings.mockResolvedValue(settings);
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    for (const host of ["router-tunnel.example.com", "Router.Tailnet.Example.Com.:443"]) {
+      const req = request("/api/usage/request-traces", { host });
+      if (requireLogin) req.cookies.get.mockReturnValue({ value: "dashboard-session" });
+      expect((await proxy(req)).status).toBe(403);
+    }
+    mocks.getSettings.mockResolvedValue({ ...settings, tunnelDashboardAccess: true });
+    const allowed = request("/api/usage/request-traces", { host: "router-tunnel.example.com" });
+    if (requireLogin) allowed.cookies.get.mockReturnValue({ value: "dashboard-session" });
+    expect(await proxy(allowed)).toBe(mocks.nextResponse);
+  });
+
   it("rejects remote Host-spoof when real peer IP is non-loopback", async () => {
     const response = await proxy(localRequest("/v1/chat/completions", {
       host: "localhost",

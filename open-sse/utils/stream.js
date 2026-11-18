@@ -6,7 +6,7 @@ import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
 import { restoreToolNames } from "./opencodeFingerprint.js";
-import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
+import { getOpenAIResponsesEventName, getReportedResponsesTier, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
@@ -29,6 +29,29 @@ const STREAM_MODE = {
 // that saw finish_reason without usage must not hold the client's terminal event
 // forever when the upstream stalls with no usage trailer and no [DONE].
 const PENDING_COMPLETION_FLUSH_MS = 3000;
+
+function observeTraceChunk(trace, chunk, eventName = chunk?.type) {
+  const tier = getReportedResponsesTier(chunk, eventName) ?? (Array.isArray(chunk?.choices) ? chunk.service_tier : undefined);
+  if (tier != null) trace.onTier?.(tier);
+  if (eventName === "error" || eventName === "response.failed" || chunk?.response?.status === "failed" || chunk?.error) {
+    trace.onError?.("upstream_stream_error");
+  }
+  if (!trace.onToken) return;
+  const delta = chunk?.delta;
+  const hasText = (value) => typeof value === "string" && value.length > 0;
+  if ((typeof eventName === "string" && eventName.startsWith("response.") && eventName.endsWith(".delta") && hasText(delta))
+    || hasText(delta?.text) || hasText(delta?.thinking) || hasText(delta?.partial_json)
+    || hasText(chunk?.message?.content) || hasText(chunk?.message?.thinking)
+    || (Array.isArray(chunk?.choices) && chunk.choices.some((choice) => {
+      const d = choice?.delta;
+      return hasText(d?.content) || hasText(d?.reasoning_content) || hasText(d?.reasoning)
+        || (Array.isArray(d?.tool_calls) && d.tool_calls.some((tool) => hasText(tool?.function?.arguments)));
+    }))
+    || (Array.isArray(chunk?.candidates) && chunk.candidates.some((candidate) => {
+      const parts = candidate?.content?.parts;
+      return Array.isArray(parts) && parts.some((part) => hasText(part?.text));
+    }))) trace.onToken();
+}
 
 /**
  * Create unified SSE transform stream
@@ -58,7 +81,8 @@ export function createSSEStream(options = {}) {
     body = null,
     onStreamComplete = null,
     apiKey = null,
-    credentials = null
+    credentials = null,
+    streamTrace = null,
   } = options;
 
   let buffer = "";
@@ -93,6 +117,7 @@ export function createSSEStream(options = {}) {
 
   // Track Responses API event framing for same-format passthrough (codex)
   let currentOpenAIResponsesEvent = null;
+  let traceEvent = null;
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
@@ -172,6 +197,8 @@ export function createSSEStream(options = {}) {
         if (mode === STREAM_MODE.TRANSLATE && targetFormat === FORMATS.OPENAI_RESPONSES && trimmed.startsWith("event:")) {
           currentOpenAIResponsesEvent = trimmed.slice(6).trim();
         }
+        if (streamTrace && trimmed.startsWith("event:")) traceEvent = trimmed.slice(6).trim();
+        if (!trimmed) traceEvent = null;
 
         // Passthrough mode: normalize and forward
         if (mode === STREAM_MODE.PASSTHROUGH) {
@@ -185,6 +212,10 @@ export function createSSEStream(options = {}) {
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
               let parsed = JSON.parse(trimmed.slice(5).trim());
+              if (streamTrace) {
+                observeTraceChunk(streamTrace, parsed, traceEvent || parsed?.type);
+                traceEvent = null;
+              }
 
               const idFixed = fixInvalidId(parsed);
 
@@ -322,6 +353,10 @@ export function createSSEStream(options = {}) {
 
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
+        if (streamTrace) {
+          observeTraceChunk(streamTrace, parsed, traceEvent || parsed.type);
+          traceEvent = null;
+        }
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
@@ -347,6 +382,7 @@ export function createSSEStream(options = {}) {
 
           // Synthesize response.failed if the Responses stream never sent a terminal event
           if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
+            streamTrace?.onError?.("stream_missing_terminal");
             const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
             reqLogger?.appendConvertedChunk?.(failedOutput);
             controller.enqueue(sharedEncoder.encode(failedOutput));
@@ -486,6 +522,12 @@ export function createSSEStream(options = {}) {
           const tail = buffer.trim();
           const tailIsDone = tail.startsWith("data:") && tail.slice(5).trim() === "[DONE]";
           if (!tailIsDone && buffer) {
+            if (streamTrace && tail.startsWith("data:")) {
+              try {
+                const parsed = JSON.parse(tail.slice(5));
+                observeTraceChunk(streamTrace, parsed, traceEvent || parsed?.type);
+              } catch { /* No complete event to observe. */ }
+            }
             let output = buffer;
             if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
@@ -521,6 +563,7 @@ export function createSSEStream(options = {}) {
           // counts — so it has to go through.
           const isDoneSentinel = parsed?.done && targetFormat !== FORMATS.OLLAMA;
           if (parsed && !isDoneSentinel) {
+            if (streamTrace) observeTraceChunk(streamTrace, parsed, traceEvent || parsed.type);
             // Same accumulation the transform loop does, so finalizeStream() can
             // log a tail chunk's tokens instead of falling back to null.
             const extracted = extractUsage(parsed);
@@ -567,6 +610,7 @@ export function createSSEStream(options = {}) {
         // Synthesize response.failed if a Responses passthrough stream never reached a terminal event
         const keepsOpenAIResponsesFormat = targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI_RESPONSES;
         if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
+          streamTrace?.onError?.("stream_missing_terminal");
           const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
           reqLogger?.appendConvertedChunk?.(failedOutput);
           controller.enqueue(sharedEncoder.encode(failedOutput));
@@ -590,7 +634,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null, streamTrace = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -604,11 +648,12 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     body,
     onStreamComplete,
     apiKey,
-    credentials
+    credentials,
+    streamTrace,
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null, streamTrace = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -618,6 +663,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    streamTrace,
   });
 }

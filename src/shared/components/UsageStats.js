@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
-import { formatTokensPerSecond } from "@/shared/utils/requestSpeed";
+import { formatServiceTier, formatTokensPerSecond } from "@/shared/utils/requestSpeed";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
 function isLLMProvider(id) {
@@ -54,19 +54,19 @@ function RecentRequests({ requests = [] }) {
         <div className="flex-1 flex items-center justify-center text-text-muted text-sm">No requests yet.</div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full min-w-[300px] border-collapse text-xs">
+          <table className="w-full table-fixed border-collapse text-xs">
             <thead className="sticky top-0 bg-bg z-10">
               <tr className="border-b border-border">
                 <th className="py-1.5 text-left font-semibold text-text-muted w-2"></th>
-                <th className="py-1.5 text-left font-semibold text-text-muted">Model</th>
-                <th className="py-1.5 text-right font-semibold text-text-muted whitespace-nowrap">In / Out</th>
+                <th scope="col" className="py-1.5 text-left font-semibold text-text-muted">Model / Speed</th>
+                <th className="w-16 py-1.5 text-right font-semibold text-text-muted whitespace-nowrap sm:w-20">In / Out</th>
                 <th
                   scope="col"
-                  className="py-1.5 pl-3 text-right font-semibold text-text-muted whitespace-nowrap"
+                  className="w-12 py-1.5 pl-1 text-right font-semibold text-text-muted whitespace-nowrap sm:w-16 sm:pl-3"
                   title="Output tokens per second over total request time, including first-token wait."
                   aria-label="TPS: Output tokens per second over total request time, including first-token wait."
                 >TPS</th>
-                <th className="py-1.5 pl-3 text-right font-semibold text-text-muted">When</th>
+                <th className="w-14 py-1.5 pl-1 text-right font-semibold text-text-muted sm:w-16 sm:pl-3">When</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -77,14 +77,17 @@ function RecentRequests({ requests = [] }) {
                     <td className="py-1.5">
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
-                    <td className="py-1.5 font-mono truncate max-w-[120px]" title={r.model}>{r.model}</td>
-                    <td className="py-1.5 text-right whitespace-nowrap">
-                      <span className="text-primary">{fmt(r.promptTokens)}↑</span>
-                      {" "}
-                      <span className="text-success">{fmt(r.completionTokens)}↓</span>
+                    <td className="py-1.5">
+                      <div className="truncate font-mono" title={r.model}>{r.model}</div>
+                      <div className="text-text-muted"><span className="sr-only">Actual speed: </span>{formatServiceTier(r.actualTier)}</div>
                     </td>
-                    <td className="py-1.5 pl-3 text-right font-mono whitespace-nowrap">{formatTokensPerSecond(r.tokensPerSecond)}</td>
-                    <td className="py-1.5 pl-3 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
+                    <td className="py-1.5 text-right">
+                      <span className="inline-block text-primary">{fmt(r.promptTokens)}↑</span>
+                      {" "}
+                      <span className="inline-block text-success">{fmt(r.completionTokens)}↓</span>
+                    </td>
+                    <td className="truncate py-1.5 pl-1 text-right font-mono sm:pl-3">{formatTokensPerSecond(r.tokensPerSecond)}</td>
+                    <td className="py-1.5 pl-1 text-right text-text-muted sm:pl-3"><TimeAgo timestamp={r.timestamp} /></td>
                   </tr>
                 );
               })}

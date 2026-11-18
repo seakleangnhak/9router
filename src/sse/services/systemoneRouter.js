@@ -33,8 +33,9 @@ export async function resolveSmartChoice({
   requestProxyOptions,
   log,
   timeoutMs = DEFAULT_SYSTEMONE_TIMEOUT_MS,
+  signal,
 }) {
-  if (!Array.isArray(models) || models.length <= 1) return null;
+  if (signal?.aborted || !Array.isArray(models) || models.length <= 1) return null;
 
   const targetModel = (typeof routerModel === "string" && routerModel.trim())
     ? routerModel.trim()
@@ -58,12 +59,14 @@ export async function resolveSmartChoice({
 
     const { provider, model } = modelInfo;
     const credentials = await getProviderCredentials(provider, new Set(), model, { requestProxyOptions });
+    if (signal?.aborted) return null;
     if (!credentials || credentials.allRateLimited) {
       log?.warn?.("COMBO", `smart-router: no credentials available for router provider "${provider}"`);
       return null;
     }
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    if (signal?.aborted) return null;
     const systemoneBody = {
       model,
       state,
@@ -76,25 +79,16 @@ export async function resolveSmartChoice({
       },
     };
 
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(`System One router timed out after ${timeoutMs}ms`)), timeoutMs);
-    });
-
-    const corePromise = handleSystemoneCore({
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const result = await handleSystemoneCore({
       body: systemoneBody,
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
       onRequestSuccess: () => {},
     });
-
-    let result;
-    try {
-      result = await Promise.race([corePromise, timeoutPromise]);
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    if (signal?.aborted) return null;
 
     if (!result?.success || !result.response) {
       log?.warn?.("COMBO", `smart-router: evaluation failed (${result?.status || "error"})`);

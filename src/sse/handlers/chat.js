@@ -30,6 +30,7 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { REASONING_EFFORTS } from "open-sse/config/reasoningEffort.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
+import { currentRequestTrace, recordTraceTier, startTraceAttempt } from "@/lib/requestTraces.js";
 
 /**
  * Handle chat completion request
@@ -37,10 +38,31 @@ import { resolveSmartChoice } from "../services/systemoneRouter.js";
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const trace = currentRequestTrace();
+  const signal = request.signal;
+  try {
+    signal?.throwIfAborted();
+    const response = await routeChat(request, clientRawRequest, trace);
+    if (signal?.aborted) {
+      response?.body?.cancel().catch(() => {});
+      signal.throwIfAborted();
+    }
+    trace?.selectResponse(response);
+    return response;
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    return errorResponse(HTTP_STATUS.CLIENT_CLOSED_REQUEST, "Request aborted");
+  }
+}
+
+async function routeChat(request, clientRawRequest, trace) {
+  const signal = request.signal;
   let body;
   try {
     body = await request.json();
+    trace?.updateUpload();
   } catch {
+    signal?.throwIfAborted();
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
@@ -89,9 +111,11 @@ export async function handleChat(request, clientRawRequest = null) {
     }
   }
 
+  recordTraceTier(trace, "clientTier", body.service_tier);
   const fastMode = await getApiKeyFastMode(apiKey);
   if (fastMode === "off") body.service_tier = "default";
   else if (fastMode === "force" && body.service_tier !== "ultrafast") body.service_tier = "priority";
+  recordTraceTier(trace, "requestedTier", body.service_tier);
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
@@ -104,6 +128,7 @@ export async function handleChat(request, clientRawRequest = null) {
   const keyAccess = await getKeyAccessContext(request);
   const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
   if (keyAccessDenied) return keyAccessDenied;
+  trace?.admit();
   const keyProxy = await getKeyProxyContext(request);
   if (keyProxy.error) return keyProxy.error;
   const { requestProxyOptions } = keyProxy;
@@ -130,6 +155,7 @@ export async function handleChat(request, clientRawRequest = null) {
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
       return handleFusionChat({
+        signal,
         body,
         models: comboModels,
         handleSingleModel: (b, m, isPanel) => {
@@ -151,6 +177,8 @@ export async function handleChat(request, clientRawRequest = null) {
     const comboCfg = comboStrategies[modelStr] || {};
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
+      signal,
+      onResponseWrapped: trace?.trackWrappedResponse,
       body,
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
@@ -170,6 +198,7 @@ export async function handleChat(request, clientRawRequest = null) {
             body: b,
             models: m,
             routerModel: comboCfg.routerModel,
+            signal,
             requestProxyOptions,
             log,
           })
@@ -184,6 +213,8 @@ export async function handleChat(request, clientRawRequest = null) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
     return handleComboChat({
+      signal,
+      onResponseWrapped: trace?.trackWrappedResponse,
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
@@ -203,6 +234,8 @@ export async function handleChat(request, clientRawRequest = null) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, maxReasoningEffort = null, requestedModel = null) {
+  const signal = request?.signal;
+  signal?.throwIfAborted();
   const keyProxy = await getKeyProxyContext(request);
   if (keyProxy.error) return keyProxy.error;
   const { requestProxyOptions } = keyProxy;
@@ -231,6 +264,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       if (comboStrategy === "fusion") {
         log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
         return handleFusionChat({
+          signal,
           body,
           models: comboModels,
           handleSingleModel: (b, m, isPanel) => {
@@ -254,6 +288,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const nestedSessionId = nestedSession?.sessionId || null;
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       return handleComboChat({
+        signal,
+        onResponseWrapped: currentRequestTrace()?.trackWrappedResponse,
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
@@ -273,6 +309,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               body: b,
               models: m,
               routerModel: comboCfg.routerModel,
+              signal,
               requestProxyOptions,
               log,
             })
@@ -295,12 +332,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
   let lastHeaders = null;
+  const trace = currentRequestTrace();
 
   while (true) {
+    signal?.throwIfAborted();
+    const attempt = startTraceAttempt(trace, provider, model);
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, requestProxyOptions });
+    signal?.throwIfAborted();
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
+      attempt?.update(credentials?.allRateLimited ? "accounts_rate_limited" : "no_eligible_account");
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
@@ -317,6 +359,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    signal?.throwIfAborted();
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
@@ -331,7 +374,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    attempt?.update("routing");
     const result = await handleChatCore({
+      signal,
+      streamTrace: attempt,
       maxReasoningEffort,
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
@@ -378,7 +424,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     });
 
-    if (result.success) return result.response;
+    if (signal?.aborted) {
+      result.response?.body?.cancel().catch(() => {});
+      signal.throwIfAborted();
+    }
+    attempt?.update(result.success ? "response_accepted" : "failed", result.status ?? result.response?.status);
+    if (result.success) {
+      attempt?.bindResponse(result.response);
+      return result.response;
+    }
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;
@@ -392,6 +446,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     if (result.keyProxyError) return result.response || errorResponse(HTTP_STATUS.BAD_GATEWAY, "API key proxy request failed");
+    signal?.throwIfAborted();
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.
@@ -400,6 +455,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
 
     if (shouldFallback) {
+      attempt?.update("account_fallback");
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;

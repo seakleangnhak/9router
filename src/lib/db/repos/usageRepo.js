@@ -3,6 +3,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
 import { getTokensPerSecond } from "@/shared/utils/requestSpeed.js";
+import { normalizeServiceTier, normalizeReportedServiceTier } from "open-sse/config/serviceTiers.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -126,12 +127,16 @@ async function ensureRingInitialized() {
   try {
     const db = await getAdapter();
     const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens, meta FROM usageHistory ORDER BY id DESC LIMIT ?`, [RING_CAP]);
-    recentRing.items = rows.reverse().map((r) => ({
-      timestamp: r.timestamp, provider: r.provider, model: r.model, connectionId: r.connectionId,
-      apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
-      tokens: parseJson(r.tokens, {}),
-      latency: parseJson(r.meta, {})?.latency,
-    }));
+    recentRing.items = rows.reverse().map((r) => {
+      const meta = parseJson(r.meta, {});
+      return {
+        timestamp: r.timestamp, provider: r.provider, model: r.model, connectionId: r.connectionId,
+        apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
+        tokens: parseJson(r.tokens, {}),
+        latency: meta?.latency,
+        actualTier: normalizeReportedServiceTier(meta?.actualTier),
+      };
+    });
   } catch {}
 }
 
@@ -226,13 +231,14 @@ export async function getActiveRequests() {
         promptTokens: t.prompt_tokens || t.input_tokens || 0,
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         tokensPerSecond: getTokensPerSecond(t, e.latency?.total),
+        actualTier: e.actualTier ?? null,
         status: e.status || "ok",
       };
     })
     .filter((e) => {
       if (e.promptTokens === 0 && e.completionTokens === 0) return false;
       const minute = e.timestamp ? e.timestamp.slice(0, 16) : "";
-      const key = `${e.model}|${e.provider}|${e.promptTokens}|${e.completionTokens}|${minute}`;
+      const key = `${e.model}|${e.provider}|${e.promptTokens}|${e.completionTokens}|${e.actualTier}|${minute}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -253,6 +259,8 @@ export async function saveRequestUsage(entry) {
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
     const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+    const requestedTier = normalizeServiceTier(entry.requestedTier) ?? undefined;
+    const actualTier = normalizeReportedServiceTier(entry.actualTier) ?? undefined;
 
     let inserted = false;
 
@@ -289,7 +297,7 @@ export async function saveRequestUsage(entry) {
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({ latency: entry.latency }),
+          stringifyJson(tokens), stringifyJson({ latency: entry.latency, requestedTier, actualTier }),
         ]
       );
 
@@ -310,7 +318,7 @@ export async function saveRequestUsage(entry) {
     });
 
     if (inserted) {
-      pushToRing(entry);
+      pushToRing({ ...entry, requestedTier, actualTier });
       scheduleStatsEvent("update", 250);
     }
   } catch (e) {
@@ -382,19 +390,21 @@ export async function getUsageStats(period = "all") {
   const recentRequests = recentRows
     .map((r) => {
       const t = parseJson(r.tokens, {}) || {};
+      const meta = parseJson(r.meta, {});
       return {
         timestamp: r.timestamp, model: r.model, provider: r.provider || "",
         promptTokens: t.prompt_tokens || t.input_tokens || 0,
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
-        tokensPerSecond: getTokensPerSecond(t, parseJson(r.meta, {})?.latency?.total),
+        tokensPerSecond: getTokensPerSecond(t, meta?.latency?.total),
+        actualTier: normalizeReportedServiceTier(meta?.actualTier),
         status: r.status || "ok",
       };
     })
     .filter((e) => {
       if (e.promptTokens === 0 && e.completionTokens === 0) return false;
       const minute = e.timestamp ? e.timestamp.slice(0, 16) : "";
-      const key = `${e.model}|${e.provider}|${e.promptTokens}|${e.completionTokens}|${minute}`;
+      const key = `${e.model}|${e.provider}|${e.promptTokens}|${e.completionTokens}|${e.actualTier}|${minute}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

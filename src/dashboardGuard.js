@@ -189,6 +189,19 @@ async function loadSettings() {
   }
 }
 
+function isDashboardTunnelBlocked(request, settings) {
+  if (!settings || settings.tunnelDashboardAccess === true) return false;
+  const host = (request.headers.get("host") || "").split(":")[0].toLowerCase().replace(/\.$/, "");
+  if (!host) return false;
+  return [settings.tunnelUrl, settings.tailscaleUrl].some((url) => {
+    try {
+      return url && new URL(url).hostname.toLowerCase().replace(/\.$/, "") === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function isAuthenticated(request) {
   if (await hasValidToken(request)) return true;
   const settings = await loadSettings();
@@ -237,6 +250,9 @@ export async function proxy(request) {
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
     if (isPublicApi(pathname)) return NextResponse.next();
+    if (/^\/api\/usage\/request-traces\/?$/.test(pathname) && isDashboardTunnelBlocked(request, await loadSettings())) {
+      return NextResponse.json({ error: "Dashboard tunnel access disabled" }, { status: 403 });
+    }
     if (await hasValidCliToken(request) || await isAuthenticated(request))
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -244,31 +260,11 @@ export async function proxy(request) {
 
   // Protect all dashboard routes
   if (pathname.startsWith("/dashboard")) {
-    let requireLogin = true;
-    let tunnelDashboardAccess = true;
-
-    try {
-      const settings = await loadSettings();
-      if (settings) {
-        requireLogin = settings.requireLogin !== false;
-        tunnelDashboardAccess = settings.tunnelDashboardAccess === true;
-
-        // Block tunnel/tailscale access if disabled (redirect to login)
-        if (!tunnelDashboardAccess) {
-          const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
-          const tunnelHost = settings.tunnelUrl ? new URL(settings.tunnelUrl).hostname.toLowerCase() : "";
-          const tailscaleHost = settings.tailscaleUrl ? new URL(settings.tailscaleUrl).hostname.toLowerCase() : "";
-          if ((tunnelHost && host === tunnelHost) || (tailscaleHost && host === tailscaleHost)) {
-            return NextResponse.redirect(new URL("/login", request.url));
-          }
-        }
-      }
-    } catch {
-      // On error, keep defaults (require login, block tunnel)
-    }
+    const settings = await loadSettings();
+    if (isDashboardTunnelBlocked(request, settings)) return NextResponse.redirect(new URL("/login", request.url));
 
     // If login not required, allow through
-    if (!requireLogin) return NextResponse.next();
+    if (settings?.requireLogin === false) return NextResponse.next();
 
     // Verify JWT token
     const token = request.cookies.get("auth_token")?.value;

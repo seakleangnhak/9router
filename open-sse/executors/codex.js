@@ -11,6 +11,7 @@ import { getModelUpstreamId, getProviderModels } from "../config/providerModels.
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
+import { abortableDelay } from "../utils/abortableDelay.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
 
@@ -264,7 +265,7 @@ export class CodexExecutor extends BaseExecutor {
    * Runs before execute() because Codex backend cannot fetch remote images.
    * Mutates body.input in place.
    */
-  async prefetchImages(body, credentials) {
+  async prefetchImages(body, credentials, signal) {
     if (!Array.isArray(body?.input)) return;
     for (const item of body.input) {
       if (!Array.isArray(item.content)) continue;
@@ -277,7 +278,7 @@ export class CodexExecutor extends BaseExecutor {
         if (credentials?.requestProxyOptions) {
           throw Object.assign(new Error("Remote image downloads do not support API key proxies; send base64 images"), { keyProxyError: true });
         }
-        const fetched = await fetchImageAsBase64(url, { timeoutMs: 15000 });
+        const fetched = await fetchImageAsBase64(url, { timeoutMs: 15000, signal });
         return { type: "input_image", image_url: fetched?.url || url, detail };
       });
       item.content = await Promise.all(pending);
@@ -285,15 +286,16 @@ export class CodexExecutor extends BaseExecutor {
   }
 
   async execute(args) {
+    args.signal?.throwIfAborted();
     const imgCount = Array.isArray(args.body?.input) ? args.body.input.reduce((n, it) => n + (Array.isArray(it.content) ? it.content.filter(c => c.type === "image_url").length : 0), 0) : 0;
     const inputLen = Array.isArray(args.body?.input) ? args.body.input.length : 0;
     dbg("CODEX", `execute start | inputItems=${inputLen} | images=${imgCount} | sessionId=${this._currentSessionId || "pending"}`);
     if (imgCount > 0) {
       const t0 = Date.now();
-      await this.prefetchImages(args.body, args.credentials);
+      await this.prefetchImages(args.body, args.credentials, args.signal);
       dbg("CODEX", `prefetchImages done | ${Date.now() - t0}ms`);
     } else {
-      await this.prefetchImages(args.body, args.credentials);
+      await this.prefetchImages(args.body, args.credentials, args.signal);
     }
 
     // Retry loop for SSE-level overloaded errors (200 OK body contains event: error)
@@ -303,7 +305,7 @@ export class CodexExecutor extends BaseExecutor {
     let attempt = 0;
     while (true) {
       const result = await super.execute(args);
-      const peek = await this._peekSseTransientError(result.response);
+      const peek = await this._peekSseTransientError(result.response, args.signal);
       if (!peek.matched) {
         // Replace body with re-assembled stream (prefix bytes already read + rest)
         if (peek.replacementBody) {
@@ -316,11 +318,13 @@ export class CodexExecutor extends BaseExecutor {
         return result;
       }
       if (peek.accountFallback) {
+        args.onUpstreamStreamError?.("upstream_stream_error");
         args.log?.warn?.("RETRY", `CODEX | SSE account fallback "${peek.message}"`);
         result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || CODEX_MODEL_CAPACITY_MESSAGE);
         return result;
       }
       if (attempt >= attempts) {
+        args.onUpstreamStreamError?.("upstream_stream_error");
         args.log?.warn?.("RETRY", `CODEX | SSE overloaded "${peek.matched}" — retries exhausted (${attempt}/${attempts})`);
         result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || peek.matched);
         return result;
@@ -328,14 +332,14 @@ export class CodexExecutor extends BaseExecutor {
       attempt++;
       args.log?.debug?.("RETRY", `CODEX | SSE "${peek.matched}" retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
       dbg("CODEX", `SSE overloaded "${peek.matched}" → retry ${attempt}/${attempts} in ${delayMs}ms`);
-      await new Promise(r => setTimeout(r, delayMs));
+      await abortableDelay(delayMs, args.signal);
     }
   }
 
   // Peek first N bytes of SSE body to detect upstream transient errors.
   // Returns { matched: string|null, message: string|null, accountFallback: boolean, replacementBody: ReadableStream|null }.
   // Caller must use replacementBody when no error matched (original body has been read).
-  async _peekSseTransientError(response) {
+  async _peekSseTransientError(response, signal) {
     if (!response || !response.ok || !response.body) return { matched: null, message: null, accountFallback: false, replacementBody: null };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -358,6 +362,12 @@ export class CodexExecutor extends BaseExecutor {
       }
     } catch (e) {
       dbg("CODEX", `peek read error: ${e.message}`);
+    }
+
+    if (signal?.aborted) {
+      reader.cancel().catch(() => {});
+      reader.releaseLock();
+      signal.throwIfAborted();
     }
 
     if (matched) {

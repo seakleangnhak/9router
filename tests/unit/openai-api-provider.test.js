@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { saveRequestDetail, saveRequestUsage } from "@/lib/usageDb.js";
 
 const { upstreamFetch } = vi.hoisted(() => ({ upstreamFetch: vi.fn() }));
 vi.mock("../../open-sse/utils/proxyFetch.js", async (importOriginal) => ({
@@ -53,10 +54,11 @@ const responsesEvents = [
 ];
 const responsesSSE = responsesEvents.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 
-function chat(body, headers = {}, sourceFormatOverride) {
+function chat(body, headers = {}, sourceFormatOverride, streamTrace) {
   return handleChatCore({
     body,
     sourceFormatOverride,
+    streamTrace,
     modelInfo: { provider: "openai", model: body.model.replace(/^openai\//, "") },
     credentials: { apiKey: "sk-openai-fixture", providerSpecificData: {} },
     connectionId: "openai-fixture",
@@ -95,6 +97,55 @@ describe("OpenAI API provider", () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it("records HTTP 200 and a separate upstream error for a failed Responses event", async () => {
+    upstreamFetch.mockResolvedValueOnce(new Response(
+      'data: {"type":"response.failed","response":{"status":"failed"}}\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+    const trace = { update: vi.fn(), onUpstreamStatus: vi.fn(), onError: vi.fn() };
+    await chat({ model: "openai/gpt-6.2-sol", input: "fixture", stream: false }, {}, undefined, trace);
+    expect(trace.onUpstreamStatus).toHaveBeenCalledExactlyOnceWith(200);
+    expect(trace.onError).toHaveBeenCalledExactlyOnceWith("upstream_stream_error");
+  });
+
+  it.each([[true, false], [false, false], [true, true], [false, true]])("persists final Responses tier (stream=%s, traces=%s)", async (stream, traces) => {
+    const events = responsesEvents.map((event) => event.response ? {
+      ...event, response: { ...event.response, service_tier: event.type === "response.completed" ? "default" : "ultrafast" },
+    } : event);
+    upstreamFetch.mockResolvedValueOnce(new Response(
+      events.map((event) => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""),
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+    const trace = traces ? { onTier: vi.fn(), update: vi.fn(), onToken: vi.fn(), onError: vi.fn(), onForwardedTier: vi.fn(), onUpstreamStatus: vi.fn(), onUpstreamStart: vi.fn() } : undefined;
+    const result = await chat({
+      model: "openai/gpt-6.2-sol", messages: [{ role: "user", content: "hi" }], stream, service_tier: "ultrafast",
+    }, {}, undefined, trace);
+    expect(result.success).toBe(true);
+    expect(await result.response.text()).toContain("lookup");
+    expect(JSON.parse(upstreamFetch.mock.calls[0][1].body).service_tier).toBe("ultrafast");
+    const tiers = { requestedTier: "ultrafast", actualTier: "default" };
+    expect(saveRequestUsage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(tiers));
+    expect(saveRequestDetail).toHaveBeenLastCalledWith(expect.objectContaining(tiers));
+    if (trace) {
+      expect(trace.onTier).toHaveBeenCalledExactlyOnceWith("default");
+      expect(trace.onForwardedTier).toHaveBeenCalledExactlyOnceWith("ultrafast");
+      expect(trace.onUpstreamStatus).toHaveBeenCalledExactlyOnceWith(200);
+      expect(trace.onUpstreamStart).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([true, false])("records Chat Completions chunk tiers (stream=%s)", async (stream) => {
+    const chunk = { ...completion, service_tier: "priority", choices: [{ delta: { content: "hi" }, finish_reason: "stop" }] };
+    upstreamFetch.mockResolvedValueOnce(new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const trace = { onTier: vi.fn(), update: vi.fn(), onToken: vi.fn(), onError: vi.fn() };
+    const result = await chat({ model: "openai/gpt-5.5", messages: [{ role: "user", content: "hi" }], stream }, {}, undefined, trace);
+    expect(result.success).toBe(true);
+    expect(await result.response.text()).toContain("hi");
+    expect(trace.onTier).toHaveBeenCalledExactlyOnceWith("priority");
+  });
 
   it("passes the dashboard GPT-5.5 model test through the real handler and executor", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url, init) => {

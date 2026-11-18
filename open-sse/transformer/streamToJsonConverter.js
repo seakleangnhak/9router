@@ -7,20 +7,28 @@
 /**
  * Process a single SSE message and update state accordingly.
  */
-function processSSEMessage(msg, state) {
+import { getReportedResponsesTier } from "../utils/responsesStreamHelpers.js";
+
+function processSSEMessage(msg, state, onTier, onStreamError) {
   if (!msg.trim()) return;
 
   const eventMatch = msg.match(/^event:\s*(.+)$/m);
   const dataMatch = msg.match(/^data:\s*(.+)$/m);
-  if (!eventMatch || !dataMatch) return;
+  if (!dataMatch) return;
 
-  const eventType = eventMatch[1].trim();
   const dataStr = dataMatch[1].trim();
   if (dataStr === "[DONE]") return;
 
   let parsed;
   try { parsed = JSON.parse(dataStr); }
   catch { return; }
+
+  const eventType = eventMatch?.[1].trim() || parsed?.type;
+  const tier = onTier && getReportedResponsesTier(parsed, eventType);
+  if (tier != null) onTier(tier);
+  if (eventType === "response.failed" || eventType === "error" || parsed?.error || parsed?.response?.status === "failed") {
+    onStreamError?.("upstream_stream_error");
+  }
 
   if (eventType === "response.created") {
     state.responseId = parsed.response?.id || state.responseId;
@@ -46,7 +54,7 @@ const EMPTY_RESPONSE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
  * @param {ReadableStream} stream - SSE stream from provider
  * @returns {Promise<Object>} Final JSON response in Responses API format
  */
-export async function convertResponsesStreamToJson(stream) {
+export async function convertResponsesStreamToJson(stream, onTier, onStreamError) {
   if (!stream || typeof stream.getReader !== "function") {
     return { id: `resp_${Date.now()}`, object: "response", created_at: Math.floor(Date.now() / 1000), status: "failed", output: [], usage: { ...EMPTY_RESPONSE } };
   }
@@ -69,17 +77,17 @@ export async function convertResponsesStreamToJson(stream) {
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const messages = buffer.split("\n\n");
+      const messages = buffer.split(/\r?\n\r?\n/);
       buffer = messages.pop() || "";
 
       for (const msg of messages) {
-        processSSEMessage(msg, state);
+        processSSEMessage(msg, state, onTier, onStreamError);
       }
     }
 
     // Flush remaining buffer (last event may not end with \n\n)
     if (buffer.trim()) {
-      processSSEMessage(buffer, state);
+      processSSEMessage(buffer, state, onTier, onStreamError);
     }
   } finally {
     reader.releaseLock();

@@ -75,6 +75,7 @@ function detectImageMime(buf) {
  */
 export async function fetchImageAsBase64(imageUrl, options = {}) {
   const { signal, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_IMAGE_BYTES } = options;
+  if (signal?.aborted) return null;
   if (!imageUrl || (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://"))) {
     return null;
   }
@@ -82,11 +83,11 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
   let url;
   try { url = new URL(imageUrl); } catch { return null; }
   const pinnedIps = await resolvePinnedIps(url.hostname);
-  if (!pinnedIps) return null;
+  if (!pinnedIps || signal?.aborted) return null;
 
   const controller = new AbortController();
-  const timeout = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
-  const fetchSignal = signal || controller.signal;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const fetchSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 
   // Pin connect to the validated IP so no second DNS resolution can rebind (TOCTOU fix).
   const dispatcher = new Agent({

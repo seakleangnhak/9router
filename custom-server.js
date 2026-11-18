@@ -2,6 +2,7 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const { pathToFileURL } = require("url");
 
 const origCreate = http.createServer.bind(http);
@@ -14,22 +15,54 @@ const PEER_TOKEN = crypto.randomBytes(24).toString("hex");
 process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
 
 let backgroundRefreshStarted = false;
+const traceContext = new AsyncLocalStorage();
+const recentTraces = new Map();
+const ingressTraces = new Map();
+const TRACE_LIMIT = 200;
+const INGRESS_TRACE_LIMIT = 50;
+const traceEndpoints = new Set(["/chat/completions", "/responses", "/responses/compact", "/messages", "/api/chat"]);
+const diagnosticEndpoints = new Set([
+  "", ...traceEndpoints, "/messages/count_tokens", "/models",
+  "/embeddings", "/images/generations", "/audio/speech", "/audio/transcriptions", "/audio/voices", "/search",
+]);
 
-function logRequestDiagnostics(req, res) {
-  if (process.env.NINEROUTER_REQUEST_DIAGNOSTICS !== "true") return;
+globalThis[Symbol.for("9router.requestTraces")] = {
+  current: () => traceContext.getStore(),
+  list: (id) => id ? [recentTraces.get(id) ?? ingressTraces.get(id)].filter(Boolean)
+    : [...recentTraces.values(), ...ingressTraces.values()].reverse()
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt)),
+};
 
+function retainTrace(history, limit, trace) {
+  history.set(trace.requestId, trace);
+  if (history.size > limit) history.delete(history.keys().next().value);
+}
+
+function observeRequest(req, res) {
+  const diagnostics = process.env.NINEROUTER_REQUEST_DIAGNOSTICS === "true";
+  const tracesEnabled = process.env.NINEROUTER_REQUEST_TRACES === "true";
+  if (!diagnostics && !tracesEnabled) return;
   const pathname = String(req.url || "").split(/[?#]/, 1)[0];
-  const match = /^(\/api\/v1|\/v1|\/codex|\/responses)(\/.*)?$/.exec(pathname);
+  const match = /^(\/api\/v1beta|\/v1beta|\/api\/v1|\/v1\/v1|\/v1|\/codex|\/responses)(\/.*)?$/.exec(pathname);
   if (!match) return;
-  // Only fixed endpoint names may enter logs; unknown suffixes can contain secrets.
-  const knownEndpoints = new Set([
-    "", "/chat/completions", "/responses", "/responses/compact", "/messages",
-    "/messages/count_tokens", "/models", "/embeddings", "/images/generations",
-    "/audio/speech", "/audio/transcriptions", "/audio/voices", "/search",
-  ]);
   const suffix = match[2] || "";
-  const diagnosticPath = match[1] + (knownEndpoints.has(suffix) ? suffix : "/:path");
+  const traceSuffix = suffix.replace(/\/$/, "");
+  const beta = match[1].endsWith("v1beta");
+  const generation = beta && /^\/models\/.+(?::|%3[aA])(generateContent|streamGenerateContent)$/.exec(traceSuffix);
+  const tracePath = req.method !== "POST" ? null
+    : beta ? (generation ? `${match[1]}/models/:model:${generation[1]}` : null)
+      : match[1] === "/codex" ? "/codex"
+      : match[1] === "/responses" ? (traceSuffix ? null : "/responses")
+        : traceEndpoints.has(traceSuffix) ? match[1] + traceSuffix : null;
+  const capture = tracePath && tracesEnabled;
+  if (!diagnostics && !capture) return;
+  // Only fixed endpoint names may enter logs; unknown suffixes can contain secrets.
+  const diagnosticPath = beta && tracePath ? tracePath : match[1] + (diagnosticEndpoints.has(suffix) ? suffix : "/:path");
   const requestId = crypto.randomUUID();
+  // Optional probe marker, never used as the router's request ID or for auth.
+  const suppliedProbeId = diagnostics ? req.headers["x-9router-probe-id"] : undefined;
+  const probeId = typeof suppliedProbeId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(suppliedProbeId)
+    ? suppliedProbeId : undefined;
   const started = process.hrtime.bigint();
   const elapsedMs = () => Math.round(Number(process.hrtime.bigint() - started) / 1e6);
   const contentLength = req.headers["content-length"];
@@ -37,12 +70,28 @@ function logRequestDiagnostics(req, res) {
     && Number.isSafeInteger(Number(contentLength)) ? Number(contentLength) : null;
   let bodyReadMs = null;
   let terminalLogged = false;
+  let admitted = false;
+  let returnedAttempt;
+  const trace = capture ? {
+    requestId, startedAt: new Date().toISOString(), path: tracePath,
+    clientTier: null, requestedTier: null, actualTier: null, attempts: [], droppedAttempts: 0,
+    upload: "pending", uploadMs: null, expectedContentLength,
+    firstTokenMs: null, status: null, durationMs: null, terminalReason: null,
+  } : null;
 
   res.setHeader("X-9Router-Request-Id", requestId);
+  const updateUpload = () => {
+    if (trace && !terminalLogged) {
+      trace.upload = "complete";
+      trace.uploadMs ??= elapsedMs();
+    }
+  };
   const log = (event) => {
+    if (!diagnostics) return;
     console.info("[RequestDiagnostics]", JSON.stringify({
       timestamp: new Date().toISOString(),
       requestId,
+      probeId,
       event,
       method: http.METHODS.includes(req.method) ? req.method : "OTHER",
       path: diagnosticPath,
@@ -56,10 +105,20 @@ function logRequestDiagnostics(req, res) {
       responseFinished: res.writableFinished,
     }));
   };
-  const onEnd = () => { bodyReadMs = elapsedMs(); };
+  const onEnd = () => { bodyReadMs = elapsedMs(); updateUpload(); };
   const terminal = (event) => {
     if (terminalLogged) return;
     terminalLogged = true;
+    if (trace) {
+      if (req.complete) trace.upload = "complete";
+      else if (trace.upload === "pending") trace.upload = event === "response_finished" ? "not_observed" : "interrupted";
+      trace.status = res.headersSent ? res.statusCode : null;
+      trace.durationMs = elapsedMs();
+      trace.terminalReason = trace.upload === "interrupted" ? "upload_interrupted"
+        : event !== "response_finished" ? "client_disconnected"
+          : trace.status >= 400 ? "http_error"
+            : returnedAttempt?.streamError ? "stream_error" : "response_finished";
+    }
     log(event);
     req.off("end", onEnd);
     req.off("aborted", onAborted);
@@ -75,6 +134,30 @@ function logRequestDiagnostics(req, res) {
   res.once("finish", onFinish);
   res.once("close", onClose);
   log("start");
+  if (trace) {
+    // ponytail: bounded per-process history. Share storage only for cross-instance lookup.
+    retainTrace(ingressTraces, INGRESS_TRACE_LIMIT, trace);
+    const responses = new WeakMap();
+    return {
+      trace, elapsedMs, updateUpload, responses,
+      get returnedAttempt() { return returnedAttempt; },
+      admit() {
+        if (admitted || terminalLogged) return;
+        admitted = true;
+        ingressTraces.delete(requestId);
+        retainTrace(recentTraces, TRACE_LIMIT, trace);
+      },
+      selectResponse(response) {
+        if (terminalLogged) return;
+        returnedAttempt = responses.get(response);
+        trace.actualTier = returnedAttempt?.actualTier ?? null;
+      },
+      trackWrappedResponse(original, wrapped) {
+        const attempt = responses.get(original);
+        if (attempt) responses.set(wrapped, attempt);
+      },
+    };
+  }
 }
 
 function startBackgroundTokenRefreshFromCustomServer() {
@@ -132,8 +215,9 @@ http.createServer = (...args) => {
     req.headers["x-9r-real-ip"] = ip;
     req.headers["x-9r-peer-token"] = PEER_TOKEN;
     if (viaProxy) req.headers["x-9r-via-proxy"] = "1";
-    logRequestDiagnostics(req, res);
-    return handler(req, res);
+    const context = observeRequest(req, res);
+    delete req.headers["x-9router-probe-id"];
+    return traceContext.run(context, handler, req, res);
   };
   const server = origCreate(...rest, wrapped);
   server.once("listening", () => {

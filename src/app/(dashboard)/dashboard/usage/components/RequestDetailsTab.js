@@ -6,7 +6,7 @@ import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
-import { getTokensPerSecond, formatTokensPerSecond } from "@/shared/utils/requestSpeed";
+import { getTokensPerSecond, formatTokensPerSecond, formatServiceTier } from "@/shared/utils/requestSpeed";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 import { getInputTokens, getOutputTokens, getCachedTokens, getCacheCreationTokens } from "./tokenDisplay";
 
@@ -240,6 +240,7 @@ export default function RequestDetailsTab() {
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
+                <th scope="col" className="whitespace-nowrap p-4 text-left text-sm font-semibold text-text-main">Speed tier</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cache Creation</th>
@@ -257,7 +258,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-text-muted">
+                  <td colSpan="11" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -266,7 +267,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-text-muted">
+                  <td colSpan="11" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -287,6 +288,10 @@ export default function RequestDetailsTab() {
                          {getProviderName(detail.provider, providerNameCache)}
                        </span>
                      </td>
+                    <td className="whitespace-nowrap p-4 text-sm text-text-main">
+                      <div><span className="text-text-muted">Requested:</span> {formatServiceTier(detail.requestedTier, "Not set")}</div>
+                      <div><span className="text-text-muted">Actual:</span> {formatServiceTier(detail.actualTier)}</div>
+                    </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
                     </td>
@@ -362,6 +367,14 @@ export default function RequestDetailsTab() {
               <div>
                 <span className="text-text-muted">Model:</span>{" "}
                 <span className="text-text-main font-mono">{selectedDetail.model}</span>
+              </div>
+              <div>
+                <span className="text-text-muted">Requested speed:</span>{" "}
+                <span className="text-text-main">{formatServiceTier(selectedDetail.requestedTier, "Not set")}</span>
+              </div>
+              <div>
+                <span className="text-text-muted">Actual speed:</span>{" "}
+                <span className="text-text-main">{formatServiceTier(selectedDetail.actualTier)}</span>
               </div>
               <div>
                 <span className="text-text-muted">Status:</span>{" "}

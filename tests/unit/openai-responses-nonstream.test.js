@@ -7,7 +7,7 @@ vi.mock("@/lib/usageDb.js", () => ({
 }));
 
 const { FORMATS } = await import("../../open-sse/translator/formats.js");
-const { translateNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
+const { handleNonStreamingResponse, translateNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
 const { handleForcedSSEToJson } = await import("../../open-sse/handlers/chatCore/sseToJsonHandler.js");
 
 // A chat.completion body as returned by a chat-native upstream (e.g. op-ericding)
@@ -122,6 +122,20 @@ describe("forced-SSE JSON path for a Responses-API client behind a chat upstream
     expect(fc).toBeTruthy();
     expect(fc.name).toBe("shell");
     expect(fc.arguments).toBe("{\"cmd\":\"pwd\"}");
+  });
+
+  it.each(["ultrafast", undefined])("records native JSON tier before translation: %s", async (service_tier) => {
+    const ctx = sseCtx(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    const onTier = vi.fn();
+    const result = await handleNonStreamingResponse({
+      ...ctx, providerResponse: Response.json({ ...CHAT_TOOL_BODY, service_tier }), reqLogger: {
+        logProviderResponse() {}, logConvertedResponse() {},
+      }, onTier,
+    });
+    expect(result.success).toBe(true);
+    expect(await result.response.json()).toMatchObject({ object: "response" });
+    if (service_tier) expect(onTier).toHaveBeenCalledExactlyOnceWith(service_tier);
+    else expect(onTier).not.toHaveBeenCalled();
   });
 
   it("returns a custom_tool_call for a marked tool", async () => {

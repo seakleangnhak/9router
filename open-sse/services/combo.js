@@ -4,6 +4,7 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
+import { abortableDelay } from "../utils/abortableDelay.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { parseModel } from "./model.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
@@ -367,7 +368,10 @@ export async function handleComboChat({
   sessionSticky = true,
   confidenceThreshold = 0.8,
   resolveSmartChoice = null,
+  onResponseWrapped,
+  signal,
 }) {
+  signal?.throwIfAborted();
   let rotatedModels = models;
   let activeStickyModel = null;
 
@@ -471,11 +475,16 @@ export async function handleComboChat({
   let requestScopedResult = null;
 
   for (let i = 0; i < rotatedModels.length; i++) {
+    signal?.throwIfAborted();
     const modelStr = rotatedModels[i];
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
     try {
       const result = await handleSingleModel(body, modelStr);
+      if (signal?.aborted) {
+        result.body?.cancel().catch(() => {});
+        signal.throwIfAborted();
+      }
       
       // Success (2xx). A 2xx is necessary but NOT sufficient: Gemini aborts (e.g.
       // MALFORMED_FUNCTION_CALL) still return 200 and stream empty content, which would
@@ -490,6 +499,7 @@ export async function handleComboChat({
         try {
           peeked = await peekComboResponse(result, log);
         } catch (peekErr) {
+          signal?.throwIfAborted();
           // peekStreamForContent is written not to throw; if reconstruction/Response
           // construction ever does, result.body is already locked by getReader() and can no
           // longer be streamed. Returning `result` would hand the client a locked, unreadable
@@ -499,6 +509,10 @@ export async function handleComboChat({
             status: 200,
             headers: { "Content-Type": "text/event-stream" },
           });
+        }
+        if (signal?.aborted) {
+          (peeked?.response || result).body?.cancel().catch(() => {});
+          signal.throwIfAborted();
         }
 
         if (!peeked) {
@@ -531,6 +545,7 @@ export async function handleComboChat({
 
         if (peeked.outcome === "content") {
           log.info("COMBO", `Model ${modelStr} succeeded${peeked.timedOut ? " (peek deadline; committed)" : ""}`);
+          onResponseWrapped?.(result, peeked.response);
           return peeked.response;
         }
 
@@ -541,6 +556,7 @@ export async function handleComboChat({
         const isLast = i === rotatedModels.length - 1;
         if (isNoRetryFinish(peeked.finishReason) || isLast) {
           log.warn("COMBO", `Model ${modelStr} returned empty (${reasonLabel}) — ${isNoRetryFinish(peeked.finishReason) ? "no-retry class" : "last candidate"}, returning as-is`);
+          onResponseWrapped?.(result, peeked.response);
           return peeked.response;
         }
 
@@ -570,6 +586,7 @@ export async function handleComboChat({
       } catch {
         // Ignore JSON parse errors
       }
+      signal?.throwIfAborted();
       if (!retryAfter) {
         const header = result.headers.get("retry-after");
         const reset = header == null ? NaN : /^\d+$/.test(header) ? Date.now() + Number(header) * 1000 : Date.parse(header);
@@ -616,7 +633,7 @@ export async function handleComboChat({
       if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
-        await new Promise(r => setTimeout(r, cooldownMs));
+        await abortableDelay(cooldownMs, signal);
       }
 
       // Fallback to next model
@@ -624,6 +641,7 @@ export async function handleComboChat({
       if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
+      signal?.throwIfAborted();
       // Catch unexpected exceptions to ensure fallback continues
       if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
         clearStickyComboSession(comboName, sessionId);
@@ -759,16 +777,6 @@ const FUSION_DEFAULTS = {
   panelHardTimeoutMs: 90000, // absolute cap so one hung model can't stall forever
 };
 
-// Resolve a Response (or {__error}) within ms; the loser keeps running but is ignored.
-function withTimeout(promise, ms) {
-  return new Promise((resolve) => {
-    const t = setTimeout(() => resolve({ __timeout: true }), ms);
-    Promise.resolve(promise)
-      .then((v) => { clearTimeout(t); resolve(v); })
-      .catch((e) => { clearTimeout(t); resolve({ __error: e }); });
-  });
-}
-
 /**
  * Collect panel responses with quorum-grace: as soon as `minPanel` calls succeed,
  * start a short grace timer for the rest, then proceed with whatever arrived. This
@@ -776,7 +784,7 @@ function withTimeout(promise, ms) {
  * still preferring a full panel when everyone is fast. Bounded by a hard timeout.
  * Returns a sparse array aligned to `calls` (undefined = not yet / dropped).
  */
-function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs }) {
+function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs }, signal) {
   return new Promise((resolve) => {
     const out = new Array(calls.length);
     let settled = 0;
@@ -788,9 +796,12 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
       finished = true;
       clearTimeout(hardTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      signal?.removeEventListener("abort", finish);
       resolve(out);
     };
     const hardTimer = setTimeout(finish, panelHardTimeoutMs);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
     calls.forEach((p, i) => {
       Promise.resolve(p)
         .then((v) => { out[i] = v; })
@@ -828,7 +839,8 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, signal }) {
+  signal?.throwIfAborted();
   const panel = Array.isArray(models) ? models.filter(Boolean) : [];
   if (panel.length === 0) {
     return new Response(
@@ -862,17 +874,18 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
 
   const t0 = Date.now();
-  const calls = panel.map((m) => withTimeout(handleSingleModel(panelBody, m, true), cfg.panelHardTimeoutMs));
-  const settled = await collectPanel(calls, { ...cfg, minPanel });
+  const calls = panel.map((m) => handleSingleModel(panelBody, m, true));
+  const settled = await collectPanel(calls, { ...cfg, minPanel }, signal);
+  signal?.throwIfAborted();
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
 
   // 2. Collect successful answers.
   const answers = [];
   for (let i = 0; i < settled.length; i++) {
+    signal?.throwIfAborted();
     const res = settled[i];
     const model = panel[i];
     if (!res) { log.warn("FUSION", `Panel ${model} dropped (straggler/timeout)`); continue; }
-    if (res.__timeout) { log.warn("FUSION", `Panel ${model} timed out`); continue; }
     if (res.__error) { log.warn("FUSION", `Panel ${model} threw`, { error: res.__error?.message || String(res.__error) }); continue; }
     if (!res.ok) { log.warn("FUSION", `Panel ${model} failed`, { status: res.status }); continue; }
     try {
@@ -888,6 +901,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       log.warn("FUSION", `Panel ${model} unparseable`, { error: e.message || String(e) });
     }
   }
+  signal?.throwIfAborted();
 
   // 3. Degrade gracefully when the panel is too thin to fuse.
   if (answers.length === 0) {

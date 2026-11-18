@@ -24,6 +24,7 @@ export const RESPONSES_EVENT = {
   FUNCTION_CALL_ARGUMENTS_DELTA: "response.function_call_arguments.delta",
   CUSTOM_TOOL_CALL_INPUT_DELTA: "response.custom_tool_call_input.delta",
   COMPLETED: "response.completed",
+  DONE: "response.done",
   INCOMPLETE: "response.incomplete",
   FAILED: "response.failed",
 };

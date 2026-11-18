@@ -1,5 +1,6 @@
 // Helpers for OpenAI Responses API streaming termination + event framing
 import { FORMATS } from "../translator/formats.js";
+import { RESPONSES_EVENT } from "../translator/schema/streamEvents.js";
 import { formatSSE } from "./streamHelpers.js";
 
 // Responses API events that signal the stream has reached a terminal state
@@ -14,6 +15,14 @@ export function getOpenAIResponsesEventName(eventName, chunk) {
   if (eventName) return eventName;
   if (chunk && typeof chunk.type === "string") return chunk.type;
   return null;
+}
+
+export function getReportedResponsesTier(chunk, eventName) {
+  const type = getOpenAIResponsesEventName(eventName, chunk);
+  // Early events can echo the requested tier before the upstream resolves it.
+  if (type === RESPONSES_EVENT.COMPLETED || type === RESPONSES_EVENT.DONE || type === RESPONSES_EVENT.INCOMPLETE) {
+    return chunk?.response?.service_tier;
+  }
 }
 
 export function isOpenAIResponsesTerminalEvent(eventName, chunk) {

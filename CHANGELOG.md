@@ -1,3 +1,17 @@
+# Cancel chat on disconnect
+
+- Closing a chat request cancels upstream work and stops pending retries and fallback. Disconnects do not mark provider accounts unhealthy. This does not change reverse-proxy upload limits.
+
+# Request Traces
+
+- Expanded routing attempts show the last forwarded tier observed for each attempt. Routing Health shows account fallback, upstream errors, and median first-token latency from retained traces; client disconnects are counted separately.
+- Temporary request diagnostics accept a separate `X-9Router-Probe-Id` UUIDv4 marker for correlating synthetic uploads with Traefik access logs. Default limits are unchanged.
+- Fork GHCR releases require routing tests before building either architecture. CI and Docker use committed npm lockfiles. Next.js updated to `16.4.6`.
+- Usage Overview now shows actual speed in Recent Requests. Details compares requested and actual speed without requiring Request Traces. Old records are not backfilled.
+- Request Traces show requested speed after API key policy and actual speed reported by the upstream that returned the response. Missing reports show “Not reported”; response timing does not imply a tier.
+- Set `NINEROUTER_REQUEST_TRACES=true` on the custom server, restart, then open **Dashboard → Usage → Request Traces**. Search by `X-9Router-Request-Id`. Up to 200 admitted chat requests are kept separately from up to 50 pending, interrupted, or rejected requests. Uploads that disconnect before headers are sent appear without a client-visible ID. Enable `NINEROUTER_REQUEST_DIAGNOSTICS` separately to correlate IDs with server logs.
+- Traces show upload status, tier after key policy, account/model attempts, first observed upstream token for supported streaming formats, and terminal reason. Traces exclude prompts, output, credentials, and account IDs. History is per process and clears on restart. Uploads rejected before reaching 9Router or interrupted before its h2c compatibility layer replays them cannot be traced.
+
 # GPT-6.2 Sol, Astra, and Ultrafast
 
 - Add `cx/gpt-6.2-sol` and `cx/gpt-6.2-astra` for Codex OAuth, and `openai/gpt-6.2-sol` and `openai/gpt-6.2-astra` for the OpenAI Responses API.

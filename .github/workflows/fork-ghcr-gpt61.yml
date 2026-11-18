@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: fork-ghcr-gpt61-${{ github.ref }}
@@ -18,7 +17,32 @@ env:
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
+  routing-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --prefix tests --no-audit --no-fund
+      - run: ./scripts/test-fork-routing.sh
+
   build-and-push:
+    if: github.ref == 'refs/heads/codex/gpt-6-1-sol-ghcr'
+    needs: routing-tests
+    permissions:
+      contents: read
+      packages: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     strategy:
@@ -32,6 +56,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Read app version
         id: version
@@ -47,6 +73,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -64,7 +91,11 @@ jobs:
           sbom: false
 
       - name: Verify runtime security fixes
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           timeout --kill-after=5s 90s docker run --rm \
             --network none --read-only --user node \
             --cpus 1 --memory 512m --pids-limit 64 \
@@ -73,16 +104,38 @@ jobs:
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777 \
             --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/verify-runtime-security.mjs,target=/verify-runtime-security.mjs,readonly" \
             --entrypoint /usr/bin/env \
-            "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-${{ matrix.arch }}" \
+            "$GHCR_IMAGE@$IMAGE_DIGEST" \
             -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp TMPDIR=/tmp \
             node /verify-runtime-security.mjs
 
+      - name: Save verified digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/digests/${{ matrix.arch }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fork-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
+          overwrite: true
+
   publish:
     needs: build-and-push
+    permissions:
+      packages: write
     runs-on: ubuntu-latest
     env:
       APP_VERSION: ${{ needs.build-and-push.outputs.version }}
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fork-digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -94,6 +147,11 @@ jobs:
 
       - name: Publish image tags
         run: |
+          set -euo pipefail
+          amd64=$(cat "$RUNNER_TEMP/digests/amd64.txt")
+          arm64=$(cat "$RUNNER_TEMP/digests/arm64.txt")
+          [[ "$amd64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$arm64" =~ ^sha256:[0-9a-f]{64}$ ]]
           docker buildx imagetools create \
             --tag "$GHCR_IMAGE:latest" \
             --tag "$GHCR_IMAGE:gpt-6.2" \
@@ -102,5 +160,5 @@ jobs:
             --tag "$GHCR_IMAGE:$APP_VERSION" \
             --tag "$GHCR_IMAGE:gpt-6.1-sol-fix" \
             --tag "$GHCR_IMAGE:$APP_VERSION-fix" \
-            "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-amd64" \
-            "$GHCR_IMAGE:build-${GITHUB_RUN_ID}-arm64"
+            "$GHCR_IMAGE@$amd64" \
+            "$GHCR_IMAGE@$arm64"

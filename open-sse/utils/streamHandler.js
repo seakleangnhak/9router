@@ -15,11 +15,10 @@ function getTimeString() {
  * @param {string} options.provider - Provider name
  * @param {string} options.model - Model name
  */
-export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "" } = {}) {
+export function createStreamController({ onDisconnect, onError, clientSignal, log, provider, model, reqTag = "" } = {}) {
   const abortController = new AbortController();
   const startTime = Date.now();
   let disconnected = false;
-  let abortTimeout = null;
 
   // Only abnormal terminations are logged; normal completion is covered by "📊 done".
   // isError uses errorLine (always shown, ignores LOG_LEVEL) so failures survive quiet levels.
@@ -31,7 +30,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
   };
 
   return {
-    signal: abortController.signal,
+    signal: clientSignal ? AbortSignal.any([clientSignal, abortController.signal]) : abortController.signal,
     startTime,
 
     isConnected: () => !disconnected,
@@ -45,10 +44,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       // socket on every completed request. "📊 done" is the authoritative outcome line.
       dbg("CTRL", `${provider}/${model} | disconnect=${reason} | dur=${Date.now() - startTime}ms`);
 
-      // Delay abort to allow cleanup
-      abortTimeout = setTimeout(() => {
-        abortController.abort();
-      }, 500);
+      abortController.abort();
 
       onDisconnect?.({ reason, duration: Date.now() - startTime });
     },
@@ -57,11 +53,6 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
     handleComplete: () => {
       if (disconnected) return;
       disconnected = true;
-
-      if (abortTimeout) {
-        clearTimeout(abortTimeout);
-        abortTimeout = null;
-      }
     },
 
     // Call on error
@@ -69,9 +60,9 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       if (disconnected) return;
       disconnected = true;
 
-      if (abortTimeout) {
-        clearTimeout(abortTimeout);
-        abortTimeout = null;
+      if (clientSignal?.aborted) {
+        onDisconnect?.({ reason: "client_closed", duration: Date.now() - startTime });
+        return;
       }
 
       if (error.name === "AbortError") {
@@ -170,8 +161,8 @@ export function createDisconnectAwareStream(transformStream, streamController, o
 
     cancel(reason) {
       streamController.handleDisconnect(reason || "cancelled");
-      reader.cancel();
-      writer.abort();
+      reader.cancel(reason).catch(() => {});
+      writer.abort(reason).catch(() => {});
     }
   });
 }
@@ -248,7 +239,7 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   });
 
   const transformedBody = providerResponse.body
-    .pipeThrough(upstreamTap)
+    .pipeThrough(upstreamTap, { signal: streamController.signal })
     .pipeThrough(transformStream);
 
   return createDisconnectAwareStream(
@@ -257,4 +248,3 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     onAbortTerminal ? () => onAbortTerminal(abortMessage) : null
   );
 }
-

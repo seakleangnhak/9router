@@ -37,6 +37,7 @@ export async function handleSystemoneCore({
   credentials,
   log,
   onRequestSuccess,
+  signal,
 }) {
   const { provider, model } = modelInfo;
   const fetch = getCredentialFetch(credentials);
@@ -87,13 +88,12 @@ export async function handleSystemoneCore({
 
   let providerResponse;
   try {
+    const deadline = AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS);
     providerResponse = await fetch(targetUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
-      ...(typeof AbortSignal?.timeout === "function"
-        ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
-        : {}),
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);

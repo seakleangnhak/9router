@@ -86,6 +86,8 @@ export function buildRequestDetail(base, overrides = {}) {
     connectionId: base.connectionId || undefined,
     timestamp: new Date().toISOString(),
     latency: base.latency || { ttft: 0, total: 0 },
+    requestedTier: base.speed?.requestedTier ?? undefined,
+    actualTier: base.speed?.actualTier ?? undefined,
     tokens: base.tokens || { prompt_tokens: 0, completion_tokens: 0 },
     request: base.request,
     providerRequest: base.providerRequest || null,
@@ -115,7 +117,7 @@ export function formatDoneLine({ usage, latency }) {
   return `DONE ${latency?.total ?? 0}ms${ttftStr} · ${inStr} · OUT ${outTok}`;
 }
 
-export function saveUsageStats({ provider, model, tokens, latency, connectionId, apiKey, endpoint, label = "USAGE", silent = false }) {
+export function saveUsageStats({ provider, model, tokens, latency, connectionId, apiKey, endpoint, speed, label = "USAGE", silent = false }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
@@ -141,6 +143,8 @@ export function saveUsageStats({ provider, model, tokens, latency, connectionId,
     model: model || "unknown",
     tokens: normalized,
     latency,
+    requestedTier: speed?.requestedTier ?? undefined,
+    actualTier: speed?.actualTier ?? undefined,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
     apiKey: apiKey || undefined,

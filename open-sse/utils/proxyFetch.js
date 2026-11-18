@@ -406,13 +406,16 @@ function isBodyReplaySafe(body) {
 }
 
 async function fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket = false) {
+  options.signal?.throwIfAborted();
   try {
     // Protocol adapters may need Node's HTTP/1 transport on the direct path.
     // Keep proxy/no-proxy resolution and strict-proxy enforcement here.
     if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
     const dispatcher = await getDispatcher(proxyUrl, false, forceFreshSocket);
+    options.signal?.throwIfAborted();
     return await rawFetch(url, { ...options, dispatcher });
   } catch (err) {
+    options.signal?.throwIfAborted();
     const allowInsecureTls = options.strictTls !== true
       && (process.env.STRICT_SSL === "false" || process.env.STRICT_SSL === "0");
     if (allowInsecureTls && isTlsCertError(err)) {
@@ -503,6 +506,7 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 }
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  options.signal?.throwIfAborted();
   if (proxyOptions?.keyProxy) options = { ...options, strictTls: true };
   // Keep the spoofed Claude Code version current (new models require a minimum CLI version).
   // Refresh in the background: the request uses the version already known, so an
@@ -585,6 +589,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       try {
         return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
       } catch (proxyError) {
+        options.signal?.throwIfAborted();
         if (proxyOptions?.strictProxy === true) {
           throw strictProxyError(proxyOptions, `[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
@@ -595,8 +600,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     try {
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname);
+      options.signal?.throwIfAborted();
       if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
     } catch (error) {
+      options.signal?.throwIfAborted();
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
@@ -605,6 +612,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     try {
       return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
     } catch (proxyError) {
+      options.signal?.throwIfAborted();
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw strictProxyError(proxyOptions, `[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);

@@ -37,6 +37,22 @@ afterAll(() => {
 });
 
 describe("request details — tab crash-risk cases", () => {
+  it("returns saved tiers without exposing arbitrary tiers or conversation payloads", async () => {
+    await saveDetail({ id: "tier-valid", requestedTier: "ultrafast", actualTier: "default", response: { content: "private-output" } });
+    await saveDetail({ id: "tier-invalid", requestedTier: ["private-request"], actualTier: "private-tier" });
+    const { GET } = await import("../../src/app/api/usage/request-details/route.js");
+    const response = await GET(new Request("http://localhost/api/usage/request-details"));
+    const { details } = await response.json();
+    expect(details.find((detail) => detail.id === "tier-valid")).toMatchObject({
+      requestedTier: "ultrafast", actualTier: "default", response: { redacted: true },
+    });
+    const invalid = details.find((detail) => detail.id === "tier-invalid");
+    expect(invalid).toBeDefined();
+    expect(invalid).not.toHaveProperty("requestedTier");
+    expect(invalid).not.toHaveProperty("actualTier");
+    expect(JSON.stringify(details)).not.toContain("private-");
+  });
+
   it("corrupt data column → parseJson fallback {}, no throw", async () => {
     // Inject a row with invalid JSON directly, bypassing save path
     adapter.run(
