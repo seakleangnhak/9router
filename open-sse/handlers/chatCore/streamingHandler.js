@@ -117,7 +117,13 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 
   return {
     success: true,
-    response: new Response(transformedBody, { headers: { ...SSE_HEADERS, ...upstreamResponseHeaders(providerResponse.headers) } })
+    response: new Response(transformedBody, {
+      headers: {
+        ...SSE_HEADERS,
+        ...upstreamResponseHeaders(providerResponse.headers),
+        ...(sourceFormat === FORMATS.OPENAI_RESPONSES ? { "Cache-Control": "no-cache, no-transform" } : {}),
+      },
+    })
   };
 }
 

@@ -4,6 +4,7 @@
 
 # Request Traces
 
+- Responses streams that close after 9Router writes a complete `response.completed` event show **Completion sent**, not **Disconnected**. This does not guarantee the client received the event.
 - Expanded routing attempts show the last forwarded tier observed for each attempt. Routing Health shows account fallback, upstream errors, and median first-token latency from retained traces; client disconnects are counted separately.
 - Temporary request diagnostics accept a separate `X-9Router-Probe-Id` UUIDv4 marker for correlating synthetic uploads with Traefik access logs. Default limits are unchanged.
 - Fork GHCR releases require routing tests before building either architecture. CI and Docker use committed npm lockfiles. Next.js updated to `16.4.6`.

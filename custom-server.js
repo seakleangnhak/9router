@@ -38,6 +38,42 @@ function retainTrace(history, limit, trace) {
   if (history.size > limit) history.delete(history.keys().next().value);
 }
 
+function observeResponsesCompletion(res, onComplete) {
+  const write = res.write;
+  let prefix = "", completed = false, hasData = false, observed = false;
+  const maxPrefix = "event: response.completed\r".length + 1;
+  res.write = function observeWrite(chunk, encoding, callback) {
+    const result = write.call(this, chunk, encoding, callback);
+    if (observed || this.destroyed || this.statusCode !== 200 || this.getHeader("content-encoding")
+      || !/^text\/event-stream(?:;|$)/i.test(this.getHeader("content-type"))) return result;
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, typeof encoding === "string" ? encoding : "utf8")
+      : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    // Keep only a short line prefix across writes; never store SSE payloads.
+    for (let start = 0; start < bytes.length;) {
+      const newline = bytes.indexOf(10, start);
+      const end = newline === -1 ? bytes.length : newline;
+      prefix += bytes.toString("latin1", start, Math.min(end, start + maxPrefix - prefix.length));
+      if (newline === -1) break;
+      const line = prefix.endsWith("\r") ? prefix.slice(0, -1) : prefix;
+      prefix = "";
+      start = newline + 1;
+      if (line === "event: response.completed" || line === "event:response.completed") completed = true;
+      else if (line.startsWith("event:")) completed = false;
+      else if (line.startsWith("data:") && line.slice(5).trim()) hasData = true;
+      else if (!line) {
+        if (completed && hasData) {
+          observed = true;
+          onComplete();
+          if (this.write === observeWrite) this.write = write;
+          break;
+        }
+        completed = hasData = false;
+      }
+    }
+    return result;
+  };
+}
+
 function observeRequest(req, res) {
   const diagnostics = process.env.NINEROUTER_REQUEST_DIAGNOSTICS === "true";
   const tracesEnabled = process.env.NINEROUTER_REQUEST_TRACES === "true";
@@ -72,6 +108,7 @@ function observeRequest(req, res) {
   let terminalLogged = false;
   let admitted = false;
   let returnedAttempt;
+  let responseCompletedEventWritten = false;
   const trace = capture ? {
     requestId, startedAt: new Date().toISOString(), path: tracePath,
     clientTier: null, requestedTier: null, actualTier: null, attempts: [], droppedAttempts: 0,
@@ -80,6 +117,9 @@ function observeRequest(req, res) {
   } : null;
 
   res.setHeader("X-9Router-Request-Id", requestId);
+  if ((diagnostics || trace) && req.method === "POST" && (match[1] === "/codex" || match[1] === "/responses" || traceSuffix === "/responses")) {
+    observeResponsesCompletion(res, () => { responseCompletedEventWritten = true; });
+  }
   const updateUpload = () => {
     if (trace && !terminalLogged) {
       trace.upload = "complete";
@@ -103,6 +143,7 @@ function observeRequest(req, res) {
       responseStarted: res.headersSent,
       status: res.headersSent ? res.statusCode : null,
       responseFinished: res.writableFinished,
+      ...(responseCompletedEventWritten && { responseCompletedEventWritten: true }),
     }));
   };
   const onEnd = () => { bodyReadMs = elapsedMs(); updateUpload(); };
@@ -115,7 +156,8 @@ function observeRequest(req, res) {
       trace.status = res.headersSent ? res.statusCode : null;
       trace.durationMs = elapsedMs();
       trace.terminalReason = trace.upload === "interrupted" ? "upload_interrupted"
-        : event !== "response_finished" ? "client_disconnected"
+        : responseCompletedEventWritten && !returnedAttempt?.streamError && event === "response_closed" ? "completed_before_close"
+          : event !== "response_finished" ? "client_disconnected"
           : trace.status >= 400 ? "http_error"
             : returnedAttempt?.streamError ? "stream_error" : "response_finished";
     }

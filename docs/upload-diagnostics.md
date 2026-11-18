@@ -37,5 +37,6 @@ Prior captures showed Traefik cutting off some requests at its 60-second read de
    - **Edge row, no matching 9Router log:** ingress did not reach the normal request handler. Check proxy buffering and h2c; a disconnect before h2c replay cannot appear in Request Traces.
    - **`bodyComplete: false`, `bodyReadMs: null`:** upload broke before routing. Compare wall time with the entrypoint's `readTimeout` and compare direct versus proxied throughput.
    - **`bodyReadMs` recorded; upstream start recorded:** upload completed. Compare the gap to upstream start, then to first token, to separate router delay from upstream work. A gap without upstream start is not proof of provider latency.
+   - **`responseCompletedEventWritten: true` with `response_closed`:** 9Router wrote the Responses completion event before the connection closed. This does not prove the client received it; do not treat it as an upload timeout.
 
 Disable temporary logging after capture. Do not retain authorization headers, cookies, request bodies, or query strings. Probe IDs are caller-supplied markers, not trusted identity. Do not change Traefik limits based on one probe.

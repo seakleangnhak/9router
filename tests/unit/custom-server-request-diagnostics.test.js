@@ -169,6 +169,40 @@ describe("HTTP request diagnostics", () => {
   });
 
   it.each([
+    [["event: response.com", "pleted\r\ndata: {\"type\":\"response.completed\"}\r\n", "\r\n"], "completed_before_close"],
+    [["event: response.completed\ndata: {}\n"], "client_disconnected"],
+    [["event: response.failed\ndata: {}\n\n"], "client_disconnected"],
+    [["event: response.completed\n\n"], "client_disconnected"],
+    [[`data: ${"x".repeat(512)}event: response.completed\n\n`], "client_disconnected"],
+  ])("distinguishes a fully written Responses completion (%s)", async (chunks, reason) => {
+    vi.stubEnv("NINEROUTER_REQUEST_TRACES", "true");
+    let responseClosed, written;
+    const closed = new Promise(resolve => { responseClosed = resolve; });
+    const ready = new Promise(resolve => { written = resolve; });
+    handler = (req, res) => {
+      req.resume();
+      res.once("close", responseClosed);
+      req.once("end", () => {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        for (const chunk of chunks) res.write(Buffer.from(chunk));
+        written();
+      });
+    };
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.write("POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}");
+    await ready;
+    socket.destroy();
+    await closed;
+
+    const [, terminal] = records();
+    expect(terminal.responseFinished).toBe(false);
+    expect(terminal.responseCompletedEventWritten ?? false).toBe(reason === "completed_before_close");
+    const { traces } = await readTraces(new Request(`http://localhost/api/usage/request-traces?id=${terminal.requestId}`)).json();
+    expect(traces[0].terminalReason).toBe(reason);
+  });
+
+  it.each([
     ["/v1/chat/completions?api_key=query-secret", "/v1/chat/completions"],
     ["/api/v1/prompt-secret?token=query-secret", "/api/v1/:path"],
     ["/codex/path-secret", "/codex/:path"],

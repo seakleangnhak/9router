@@ -11,6 +11,7 @@ const label = (value) => value?.replaceAll("_", " ") ?? "—";
 const dateTime = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
 const outcomes = {
   response_finished: ["Completed", "success"],
+  completed_before_close: ["Completion sent", "success"],
   upload_interrupted: ["Upload interrupted", "warning"],
   client_disconnected: ["Disconnected", "warning"],
   http_error: ["HTTP error", "error"],
