@@ -170,18 +170,24 @@ describe("API key Fast mode policy", () => {
     expect(await db.getApiKeyFastMode(denied.key)).toBe("off");
   });
 
-  it.each(["off", "on", "force"].flatMap(mode =>
-    [undefined, "default", "priority", "fast"].flatMap(tier =>
-      ["/v1/responses", "/v1/chat/completions"].map(endpoint => [mode, tier, endpoint])
-    )
-  ))("applies %s to client tier %s on %s, preserving reasoning", async (fastMode, tier, endpoint) => {
-    const key = await db.createApiKey("policy", "fixture", false, fastMode);
-    const response = await handleChat(request({
-      model: "cx/gpt-6.1-sol", input: "hello", service_tier: tier, reasoning: { effort: "high" },
-    }, key.key, endpoint));
-    expect(response.status).toBe(200);
-    expect(chatCore.mock.calls[0][0].body.service_tier).toBe(fastMode === "off" ? "default" : fastMode === "force" ? "priority" : tier);
-    expect(chatCore.mock.calls[0][0].body.reasoning).toEqual({ effort: "high" });
+  describe.each(["/v1/responses", "/v1/chat/completions"])("Fast mode at %s", (endpoint) => {
+    it.each([
+      [undefined, "default", undefined, "priority"],
+      ["default", "default", "default", "priority"],
+      ["priority", "default", "priority", "priority"],
+      ["fast", "default", "fast", "priority"],
+      ["ultrafast", "default", "ultrafast", "ultrafast"],
+    ])("routes client tier %s to OFF=%s, ON=%s, FORCE=%s", async (tier, off, on, force) => {
+      for (const [fastMode, expectedTier] of Object.entries({ off, on, force })) {
+        const key = await db.createApiKey("policy", "fixture", false, fastMode);
+        const response = await handleChat(request({
+          model: "cx/gpt-6.1-sol", input: "hello", service_tier: tier, reasoning: { effort: "high" },
+        }, key.key, endpoint));
+        expect(response.status).toBe(200);
+        expect(chatCore.mock.calls.at(-1)[0].body.service_tier, fastMode).toBe(expectedTier);
+        expect(chatCore.mock.calls.at(-1)[0].body.reasoning).toEqual({ effort: "high" });
+      }
+    });
   });
 
   it.each(["fast-alias", "fast-combo"])("forces priority for normal requests to %s", async (model) => {

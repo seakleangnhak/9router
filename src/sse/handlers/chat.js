@@ -91,7 +91,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
   const fastMode = await getApiKeyFastMode(apiKey);
   if (fastMode === "off") body.service_tier = "default";
-  else if (fastMode === "force") body.service_tier = "priority";
+  else if (fastMode === "force" && body.service_tier !== "ultrafast") body.service_tier = "priority";
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");

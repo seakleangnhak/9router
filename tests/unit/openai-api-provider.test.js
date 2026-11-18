@@ -215,7 +215,20 @@ describe("OpenAI API provider", () => {
       output: responsesCompletion.output, usage: responsesCompletion.usage });
   });
 
-  it.each(["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"])("lists %s on the API-key provider", (model) => {
+  it.each(["gpt-6.2-sol", "gpt-6.2-astra"].flatMap(model =>
+    ["openai", "openai-responses"].map(format => [model, format])
+  ))("routes %s with Ultrafast from %s to OpenAI Responses", async (model, format) => {
+    upstreamFetch.mockResolvedValueOnce(new Response(responsesSSE, { headers: { "content-type": "text/event-stream" } }));
+    const input = format === "openai" ? { messages: [{ role: "user", content: "Hello" }] } : { input: "Hello" };
+    const result = await chat({ model: `openai/${model}`, stream: false, service_tier: "ultrafast", ...input }, {}, format);
+    expect(result.success).toBe(true);
+    const [url, init] = upstreamFetch.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/responses");
+    expect(JSON.parse(init.body)).toMatchObject({ model, service_tier: "ultrafast" });
+    await result.response.text();
+  });
+
+  it.each(["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"])("lists %s on the API-key provider", (model) => {
     expect(PROVIDER_MODELS.openai.some(({ id }) => id === model)).toBe(true);
   });
 });

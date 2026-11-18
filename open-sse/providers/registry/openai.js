@@ -36,6 +36,8 @@ export default {
     },
   ],
   models: [
+    { id: "gpt-6.2-sol", name: "GPT-6.2 Sol", targetFormat: "openai-responses", supportedFormats: ["openai-responses"] },
+    { id: "gpt-6.2-astra", name: "GPT-6.2 Astra", targetFormat: "openai-responses", supportedFormats: ["openai-responses"] },
     { id: "gpt-6-astra", name: "GPT-6 Astra" },
     { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", targetFormat: "openai-responses", supportedFormats: ["openai-responses"] },
     { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },

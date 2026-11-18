@@ -1,4 +1,4 @@
-name: Build GPT-6.1 Sol Image
+name: Build 9Router Fork Image
 
 on:
   workflow_dispatch:
@@ -96,6 +96,8 @@ jobs:
         run: |
           docker buildx imagetools create \
             --tag "$GHCR_IMAGE:latest" \
+            --tag "$GHCR_IMAGE:gpt-6.2" \
+            --tag "$GHCR_IMAGE:sha-$GITHUB_SHA" \
             --tag "$GHCR_IMAGE:gpt-6.1-sol" \
             --tag "$GHCR_IMAGE:$APP_VERSION" \
             --tag "$GHCR_IMAGE:gpt-6.1-sol-fix" \

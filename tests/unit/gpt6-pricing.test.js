@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getPricingForModel, calculateCostFromTokens, formatCost } from "../../open-sse/providers/pricing.js";
 
 const cases = [
+  ["gpt-6.2-astra", 8, 0.4, 10, 40],
+  ["gpt-6.2-sol", 2, 0.1, 2.5, 10],
   ["gpt-6-astra(medium)", 10, 1, 12.5, 50],
   ["gpt-6-luna", 0.1, 0.01, 0.125, 0.5],
   ["gpt-6-sol(medium)", 2, 0.2, 2.5, 10],

@@ -1258,7 +1258,7 @@ export default function APIPageClient({ machineId }) {
                       aria-busy={fastModeSaving === key.id}
                       disabled={fastModeSaving !== null}
                       onClick={() => handleFastModeChange(key.id, FAST_MODES[(FAST_MODES.indexOf(key.fastMode) + 1) % FAST_MODES.length])}
-                      title={fastModeSaving === key.id ? "Saving Fast mode…" : `${key.fastMode.toUpperCase()}: ${key.fastMode === "off" ? "Force normal speed" : key.fastMode === "on" ? "Follow client request" : "Always request priority"}`}
+                      title={fastModeSaving === key.id ? "Saving Fast mode…" : `${key.fastMode.toUpperCase()}: ${key.fastMode === "off" ? "Force normal speed" : key.fastMode === "on" ? "Follow client request" : "Request Fast unless client asks for Ultrafast"}`}
                       className={`inline-flex h-9 items-center justify-center gap-1 px-2 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:cursor-wait ${key.fastMode === "force" ? "bg-primary/20 text-primary ring-1 ring-primary" : key.fastMode === "on" ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
                     >
                       <span aria-hidden="true" className={`material-symbols-outlined text-[22px] ${key.fastMode !== "off" ? "fill-1" : ""}`}>bolt</span>

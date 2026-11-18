@@ -8,6 +8,23 @@ const responsesUrl = "https://chatgpt.com/backend-api/codex/responses";
 afterEach(() => vi.restoreAllMocks());
 
 describe("Codex compact routing", () => {
+  it.each(["gpt-6.2-sol", "gpt-6.2-astra"])("forwards Ultrafast on %s Responses, not Compact", async (model) => {
+    const fetchMock = vi.spyOn(proxyFetchModule, "proxyAwareFetch")
+      .mockImplementation(async () => Response.json({ output: [] }));
+    const executor = new CodexExecutor();
+    const request = { model, input: "hello", service_tier: "ultrafast", reasoning: { effort: "ultra" } };
+    await executor.execute({ model, stream: true, credentials, body: { ...request } });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(responsesUrl);
+    expect(init.headers["x-openai-internal-codex-responses-lite"]).toBe("true");
+    expect(JSON.parse(init.body)).toMatchObject({ model, service_tier: "ultrafast", reasoning: { effort: "ultra" } });
+
+    await executor.execute({ model, stream: false, credentials, body: { ...request, _compact: true } });
+    const [compactUrl, compactInit] = fetchMock.mock.calls[1];
+    expect(compactUrl).toBe(`${responsesUrl}/compact`);
+    expect(JSON.parse(compactInit.body)).not.toHaveProperty("service_tier");
+  });
+
   it.each(["gpt-5.6-terra", "gpt-6.1-sol"])("isolates normal and repeated compact requests for %s", async (model) => {
     const fetchMock = vi.spyOn(proxyFetchModule, "proxyAwareFetch")
       .mockImplementation(async () => Response.json({ output: [] }));

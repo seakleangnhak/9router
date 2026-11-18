@@ -570,7 +570,7 @@ export class CodexExecutor extends BaseExecutor {
     delete body.previous_response_id; // store=false → backend can't resolve previous resp; avoid 404
 
     if (body.service_tier === "fast") body.service_tier = "priority";
-    if (body.service_tier && body.service_tier !== "priority") delete body.service_tier;
+    if (body.service_tier && body.service_tier !== "priority" && body.service_tier !== "ultrafast") delete body.service_tier;
 
     // Final allowlist filter — strip any unknown field that could trigger upstream "routing_unsupported"
     for (const k of Object.keys(body)) {

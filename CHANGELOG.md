@@ -1,3 +1,9 @@
+# GPT-6.2 Sol, Astra, and Ultrafast
+
+- Add `cx/gpt-6.2-sol` and `cx/gpt-6.2-astra` for Codex OAuth, and `openai/gpt-6.2-sol` and `openai/gpt-6.2-astra` for the OpenAI Responses API.
+- Set the router key's Fast mode to **ON** or **FORCE** and send `"service_tier": "ultrafast"` to request Ultrafast. **OFF** blocks it; **FORCE** requests regular Fast unless the client explicitly asks for Ultrafast. OpenAI enforces account eligibility: Codex Pro $200 supports Sol only, while the separately billed API supports both models.
+- Usage estimates use standard short-context prices, not Ultrafast billing rates.
+
 # Local HTTP diagnostics (2026-11-17)
 
 - Add opt-in request IDs and HTTP lifecycle timing to investigate interrupted API uploads and responses.
